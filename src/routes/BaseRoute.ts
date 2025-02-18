@@ -2,18 +2,27 @@ import { Router } from "express";
 import BaseController from "../controllers/BaseController";
 
 class BaseRoute<T> {
-  constructor(private controller: BaseController<T>, private path: string) {}
+  private router: Router;
 
-  getRouter() {
-    const router = Router();
+  constructor(private controller: BaseController<T>, private path: string) {
+    this.router = Router();
+    this.initializeRoutes();
+  }
 
-    router.get(`${this.path}`, this.controller.getAll);
-    router.get(`${this.path}/:id`, this.controller.getById);
-    router.post(`${this.path}`, this.controller.create);
-    router.put(`${this.path}/:id`, this.controller.update);
-    router.delete(`${this.path}/:id`, this.controller.delete);
+  private initializeRoutes() {
+    this.router.get(`${this.path}`, this.controller.getAll);
+    this.router.get(`${this.path}/:id`, this.controller.getById);
+    this.router.post(`${this.path}`, this.controller.create);
+    this.router.put(`${this.path}/:id`, this.controller.update);
+    this.router.delete(`${this.path}/:id`, this.controller.delete);
+  }
 
-    return router;
+  public addCustomPost(endpoint: string, handler: (req: any, res: any) => void) {
+    this.router.post(`${this.path}${endpoint}`, handler);
+  }
+
+  public getRouter() {
+    return this.router;
   }
 }
 

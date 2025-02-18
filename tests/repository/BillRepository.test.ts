@@ -63,6 +63,12 @@ describe('BillRepository', () => {
     });
   });
 
+  describe("create bills", () => {
+    it('should be able to create multiple bills', async () => {
+      const data = [""] 
+    })
+  })
+
   describe('update', () => {
     it('should update a record', async () => {
       const fields = ['name'];

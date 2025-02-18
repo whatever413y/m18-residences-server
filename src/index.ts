@@ -7,6 +7,8 @@ import db from "./config/Database"
 import TenantRoute from "./routes/TenantRoute"
 import RoomRoute from "./routes/RoomRoute"
 import ElectricityReadingRoute from "./routes/ElectricityReadingRoute"
+import BillRoute from "./routes/BillRoute";
+import { userInfo } from "os";
 
 dotenv.config()
 
@@ -28,6 +30,7 @@ db.connect((err) => {
 app.use(TenantRoute)
 app.use(RoomRoute)
 app.use(ElectricityReadingRoute)
+app.use(BillRoute)
 
 app.listen(PORT, () => {
   console.log(`App listening on port ${PORT}`);

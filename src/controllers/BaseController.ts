@@ -12,7 +12,8 @@ abstract class BaseController<T> {
       const items = await this.repository.getAll();
       res.json(items);
     } catch (err) {
-      res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });
+      res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });      
+      console.log("Error: ", err);
     }
   };
 
@@ -28,6 +29,7 @@ abstract class BaseController<T> {
       }
     } catch (err) {
       res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });
+      console.log("Error: ", err);
     }
   };
 
@@ -41,6 +43,7 @@ abstract class BaseController<T> {
       res.status(201).json(newItem);
     } catch (err) {
       res.status(500).json({ error: `Failed to create ${this.getRepositoryName()}` });
+      console.log("Error: ", err);
     }
   };
 
@@ -55,6 +58,7 @@ abstract class BaseController<T> {
       res.json(updatedItem);
     } catch (err) {
       res.status(500).json({ error: `Failed to update ${this.getRepositoryName()}` });
+      console.log("Error: ", err);
     }
   };
 
@@ -66,6 +70,7 @@ abstract class BaseController<T> {
       res.status(204).send();
     } catch (err) {
       res.status(500).json({ error: `Failed to delete ${this.getRepositoryName()}` });
+      console.log("Error: ", err);
     }
   };
 

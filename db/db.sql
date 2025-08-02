@@ -2,7 +2,7 @@ CREATE DATABASE rms;
 
 CREATE TABLE Rooms (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL UNIQUE,
     rent DECIMAL(10,2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
@@ -11,7 +11,7 @@ CREATE TABLE Rooms (
 CREATE TABLE Tenants (
     id SERIAL PRIMARY KEY,
     room_id INT NOT NULL,
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     FOREIGN KEY (room_id) REFERENCES Rooms(id)
@@ -20,17 +20,20 @@ CREATE TABLE Tenants (
 CREATE TABLE Electricity_Readings (
     id SERIAL PRIMARY KEY,
     tenant_id INT NOT NULL,
+    room_id INT NOT NULL,
     prev_reading INT NOT NULL,
     curr_reading INT NOT NULL,
     consumption DECIMAL(10,2) GENERATED ALWAYS AS (curr_reading - prev_reading) STORED NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    FOREIGN KEY (tenant_id) REFERENCES Tenants(id)
+    FOREIGN KEY (tenant_id) REFERENCES Tenants(id),
+    FOREIGN KEY (room_id) REFERENCES Rooms(id)
 );
 
 
 CREATE TABLE Bills (
     id SERIAL PRIMARY KEY,
+    reading_id INT NOT NULL,
     tenant_id INT NOT NULL,
     room_charges DECIMAL(10,2) DEFAULT 0 NOT NULL,
     electric_charges DECIMAL(10,2) DEFAULT 0 NOT NULL,
@@ -39,6 +42,7 @@ CREATE TABLE Bills (
     total_amount DECIMAL(10,2) GENERATED ALWAYS AS (room_charges + electric_charges + additional_charges) STORED NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (reading_id) REFERENCES Electricity_Readings(id),
     FOREIGN KEY (tenant_id) REFERENCES Tenants(id)
 );
 

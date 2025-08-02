@@ -20,7 +20,7 @@ const PORT: number = Number(process.env.PORT) || 3001;
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'
     ? ["https://your-production-site.com"]
-    : ["http://localhost:3000", "http://localhost:5173"],
+    : ["http://localhost:45794"],
   methods: ["GET", "POST", "PUT", "DELETE"],
   // credentials: true,
 }));

@@ -1,61 +1,71 @@
 import BaseRepository from "./BaseRepository";
-import pool from "../config/Database";
-import { Billing } from "../interfaces/Bill";
+import { prisma } from "../lib/prisma";
+import { Bill } from "@prisma/client";
 
-class BillRepository extends BaseRepository {
-  constructor() {
-    super();
-    this.tableName = "Bills";
+class BillRepository extends BaseRepository<Bill> {
+  async getAll(): Promise<Bill[]> {
+    return prisma.bill.findMany();
   }
 
-  async createBills<T>(data: Billing[]): Promise<T[]> {
-    if (data.length === 0) return [];
-  
-    const fieldNames = [
-      "tenant_id",
-      "room_charges",
-      "electric_charges",
-      "additional_charges",
-      "additional_description",
-    ].join(", ");
+  async getById(id: number): Promise<Bill | null> {
+    return prisma.bill.findUnique({ where: { id } });
+  }
+
+  async create(input: {
+    tenantId: number;
+    readingId: number;
+    electricityRate: number;
+    additionalCharges?: number;
+    additionalDescription?: string | null;
+  }): Promise<Bill> {
+    const {
+      tenantId,
+      readingId,
+      electricityRate,
+      additionalCharges = 0,
+      additionalDescription = null,
+    } = input;
     
-    const placeholders: string[] = [];
-    const values: any[] = [];
-  
-    data.forEach((bill, index) => {
-      const start = index * 4; 
-      
-      placeholders.push(`(
-        $${start + 1},  
-        (SELECT COALESCE(r.rent, 0) FROM Rooms r WHERE r.id = (SELECT t.room_id FROM Tenants t WHERE t.id = $${start + 1})), 
-        COALESCE((
-          SELECT e.consumption * $${start + 4} FROM Electricity_Readings e
-          WHERE e.tenant_id = $${start + 1}
-          AND e.created_at = (SELECT MAX(created_at) FROM Electricity_Readings WHERE tenant_id = $${start + 1})
-        ), 0),  -- electric_charges
-        $${start + 2},  
-        $${start + 3}  
-      )`);
-  
-      values.push(
-        bill.tenant_id,
-        bill.additional_charges || 0,
-        bill.additional_description || null,
-        bill.rate
-      );
+    const tenantWithRoom = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { room: { select: { rent: true } } },
     });
-  
-    const query = `
-      INSERT INTO ${this.tableName} (${fieldNames})
-      VALUES ${placeholders.join(", ")}
-      RETURNING *;
-    `;
-  
-    const result = await pool.query(query, values);
-    return result.rows;
-  }
-  
 
+    const roomCharges = tenantWithRoom?.room?.rent ?? 0;
+
+    const reading = await prisma.electricityReading.findUnique({
+      where: { id: readingId },
+      select: { consumption: true },
+    });
+
+    if (!reading) {
+      throw new Error("Electricity reading not found");
+    }
+
+    const electricCharges = reading.consumption * electricityRate;
+
+    const totalAmount = roomCharges + electricCharges + additionalCharges;
+
+    return prisma.bill.create({
+      data: {
+        tenantId,
+        readingId,
+        roomCharges,
+        electricCharges,
+        additionalCharges,
+        additionalDescription,
+        totalAmount,
+      },
+    });
+  }
+
+  async update(id: number, data: any): Promise<Bill> {
+    return prisma.bill.update({ where: { id }, data });
+  }
+
+  async delete(id: number): Promise<Bill> {
+    return prisma.bill.delete({ where: { id } });
+  }
 }
 
 export default BillRepository;

@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  rent      Int      
+  tenants   Tenant[]
+  readings  ElectricityReading[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@map("Rooms")
+}
+
+model Tenant {
+  id        Int        @id @default(autoincrement())
+  roomId    Int        @map("room_id")
+  name      String     @unique
+  room      Room       @relation(fields: [roomId], references: [id])
+  readings  ElectricityReading[]
+  bills     Bill[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@map("Tenants")
+}
+
+model ElectricityReading {
+  id          Int      @id @default(autoincrement())
+  tenantId    Int      @map("tenant_id")
+  roomId      Int      @map("room_id")
+  prevReading Int      @map("prev_reading")
+  currReading Int      @map("curr_reading")
+  consumption Int      
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  room        Room     @relation(fields: [roomId], references: [id])
+  bill        Bill?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("Electricity_Readings")
+}
+
+model Bill {
+  id                    Int      @id @default(autoincrement())
+  readingId             Int      @unique
+  tenantId              Int      @map("tenant_id")
+  roomCharges           Int      @default(0) @map("room_charges")      
+  electricCharges       Int      @default(0) @map("electric_charges")  
+  additionalCharges     Int      @default(0) @map("additional_charges")
+  additionalDescription String?  @map("additional_description")
+  totalAmount           Int      @map("total_amount")               
+  reading               ElectricityReading @relation(fields: [readingId], references: [id])
+  tenant                Tenant             @relation(fields: [tenantId], references: [id])
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  @@map("Bills")
+}

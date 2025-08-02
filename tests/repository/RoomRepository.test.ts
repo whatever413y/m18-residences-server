@@ -1,92 +1,99 @@
-import RoomRepository from "../../src/repository/RoomRepository"
-import pool from "../../src/config/Database"
+import { prisma } from "../../src/lib/prisma";
+import RoomRepository from "../../src/repository/RoomRepository";
 
-jest.mock('../../src/config/Database', () => ({
-  query: jest.fn() as jest.Mock, // Cast query to jest.Mock
+jest.mock("../../src/lib/prisma", () => ({
+  prisma: {
+    room: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+  },
 }));
 
-describe('RoomRepository', () => {
+describe("RoomRepository (Prisma)", () => {
   const roomRepository = new RoomRepository();
-  const tableName = 'Rooms';
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('getAll', () => {
-    it('should return all records', async () => {
-      const mockRows = [{ id: 1, name: 'Test' }];
-      (pool.query as jest.Mock).mockResolvedValue({ rows: mockRows });
+  describe("getAll", () => {
+    it("should return all rooms", async () => {
+      const mockRooms = [{ id: 1, name: "Room 101" }];
+      (prisma.room.findMany as jest.Mock).mockResolvedValue(mockRooms);
 
       const result = await roomRepository.getAll();
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName}`);
-      expect(result).toEqual(mockRows);
+      expect(prisma.room.findMany).toHaveBeenCalled();
+      expect(result).toEqual(mockRooms);
     });
   });
 
-  describe('getById', () => {
-    it('should return a record by ID', async () => {
-      const mockRow = { id: 1, name: 'Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("getById", () => {
+    it("should return a room by ID", async () => {
+      const mockRoom = { id: 1, name: "Room 101" };
+      (prisma.room.findUnique as jest.Mock).mockResolvedValue(mockRoom);
 
       const result = await roomRepository.getById(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName} WHERE id = $1`, [1]);
-      expect(result).toEqual(mockRow);
+      expect(prisma.room.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(result).toEqual(mockRoom);
     });
 
-    it('should return null if no record is found', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it("should return null if room not found", async () => {
+      (prisma.room.findUnique as jest.Mock).mockResolvedValue(null);
 
-      const result = await roomRepository.getById(1);
+      const result = await roomRepository.getById(999);
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.room.findUnique).toHaveBeenCalledWith({
+        where: { id: 999 },
+      });
       expect(result).toBeNull();
     });
   });
 
-  describe('create', () => {
-    it('should create a new record', async () => {
-      const fields = ['name'];
-      const values = ['Test'];
-      const mockRow = { id: 1, name: 'Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("create", () => {
+    it("should create a new room", async () => {
+      const mockRoom = { id: 1, name: "New Room" };
+      (prisma.room.create as jest.Mock).mockResolvedValue(mockRoom);
 
-      const result = await roomRepository.create(fields, values);
+      const result = await roomRepository.create({ name: "New Room" });
 
-      expect(pool.query).toHaveBeenCalledWith(
-        `INSERT INTO ${tableName} (name) VALUES ($1) RETURNING *`,
-        values
-      );
-      expect(result).toEqual(mockRow);
+      expect(prisma.room.create).toHaveBeenCalledWith({
+        data: { name: "New Room" },
+      });
+      expect(result).toEqual(mockRoom);
     });
   });
 
-  describe('update', () => {
-    it('should update a record', async () => {
-      const fields = ['name'];
-      const values = ['Updated Test'];
-      const mockRow = { id: 1, name: 'Updated Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("update", () => {
+    it("should update a room", async () => {
+      const mockRoom = { id: 1, name: "Updated Room" };
+      (prisma.room.update as jest.Mock).mockResolvedValue(mockRoom);
 
-      const result = await roomRepository.update(1, fields, values);
+      const result = await roomRepository.update(1, { name: "Updated Room" });
 
-      expect(pool.query).toHaveBeenCalledWith(
-        `UPDATE ${tableName} SET name = $1 WHERE id = $2 RETURNING *`,
-        [...values, 1]
-      );
-      expect(result).toEqual(mockRow);
+      expect(prisma.room.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { name: "Updated Room" },
+      });
+
+      expect(result).toEqual(mockRoom);
     });
   });
 
-  describe('delete', () => {
-    it('should delete a record', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({});
+  describe("delete", () => {
+    it("should delete a room", async () => {
+      const mockRoom = { id: 1, name: "Deleted Room" };
+      (prisma.room.delete as jest.Mock).mockResolvedValue(mockRoom);
 
-      await roomRepository.delete(1);
+      const result = await roomRepository.delete(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`DELETE FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.room.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(result).toEqual(mockRoom);
     });
   });
 });

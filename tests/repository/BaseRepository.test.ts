@@ -1,92 +1,109 @@
-import BaseRepository from "../../src/repository/BaseRepository"
-import pool from "../../src/config/Database"
+import BaseRepository from "../../src/repository/BaseRepository";
+import { prisma } from "../../src/lib/prisma";
 
-jest.mock('../../src/config/Database', () => ({
-  query: jest.fn() as jest.Mock, // Cast query to jest.Mock
+jest.mock("../../src/lib/prisma", () => ({
+  prisma: {
+    room: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+  },
 }));
 
-describe('BaseRepository', () => {
-  const baseRepository = new BaseRepository();
-  const tableName = 'base_table';
+describe("BaseRepository with Prisma", () => {
+  class TestRepository extends BaseRepository<any> {
+    async getAll() {
+      return prisma.room.findMany();
+    }
+    async getById(id: number) {
+      return prisma.room.findUnique({ where: { id } });
+    }
+    async create(data: any) {
+      return prisma.room.create({ data });
+    }
+    async update(id: number, data: any) {
+      return prisma.room.update({ where: { id }, data });
+    }
+    async delete(id: number) {
+      await prisma.room.delete({ where: { id } });
+    }
+  }
+
+  const repo = new TestRepository();
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('getAll', () => {
-    it('should return all records', async () => {
-      const mockRows = [{ id: 1, name: 'Test' }];
-      (pool.query as jest.Mock).mockResolvedValue({ rows: mockRows });
+  describe("getAll", () => {
+    it("should return all records", async () => {
+      const mockRows = [{ id: 1, name: "Test" }];
+      (prisma.room.findMany as jest.Mock).mockResolvedValue(mockRows);
 
-      const result = await baseRepository.getAll();
+      const result = await repo.getAll();
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName}`);
+      expect(prisma.room.findMany).toHaveBeenCalled();
       expect(result).toEqual(mockRows);
     });
   });
 
-  describe('getById', () => {
-    it('should return a record by ID', async () => {
-      const mockRow = { id: 1, name: 'Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("getById", () => {
+    it("should return a record by ID", async () => {
+      const mockRow = { id: 1, name: "Test" };
+      (prisma.room.findUnique as jest.Mock).mockResolvedValue(mockRow);
 
-      const result = await baseRepository.getById(1);
+      const result = await repo.getById(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.room.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
       expect(result).toEqual(mockRow);
     });
 
-    it('should return null if no record is found', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it("should return null if no record is found", async () => {
+      (prisma.room.findUnique as jest.Mock).mockResolvedValue(null);
 
-      const result = await baseRepository.getById(1);
+      const result = await repo.getById(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.room.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
       expect(result).toBeNull();
     });
   });
 
-  describe('create', () => {
-    it('should create a new record', async () => {
-      const fields = ['name'];
-      const values = ['Test'];
-      const mockRow = { id: 1, name: 'Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("create", () => {
+    it("should create a new record", async () => {
+      const data = { name: "Test" };
+      const mockRow = { id: 1, name: "Test" };
+      (prisma.room.create as jest.Mock).mockResolvedValue(mockRow);
 
-      const result = await baseRepository.create(fields, values);
+      const result = await repo.create(data);
 
-      expect(pool.query).toHaveBeenCalledWith(
-        `INSERT INTO ${tableName} (name) VALUES ($1) RETURNING *`,
-        values
-      );
+      expect(prisma.room.create).toHaveBeenCalledWith({ data });
       expect(result).toEqual(mockRow);
     });
   });
 
-  describe('update', () => {
-    it('should update a record', async () => {
-      const fields = ['name'];
-      const values = ['Updated Test'];
-      const mockRow = { id: 1, name: 'Updated Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("update", () => {
+    it("should update a record", async () => {
+      const data = { name: "Updated Test" };
+      const mockRow = { id: 1, name: "Updated Test" };
+      (prisma.room.update as jest.Mock).mockResolvedValue(mockRow);
 
-      const result = await baseRepository.update(1, fields, values);
+      const result = await repo.update(1, data);
 
-      expect(pool.query).toHaveBeenCalledWith(
-        `UPDATE ${tableName} SET name = $1 WHERE id = $2 RETURNING *`,
-        [...values, 1]
-      );
+      expect(prisma.room.update).toHaveBeenCalledWith({ where: { id: 1 }, data });
       expect(result).toEqual(mockRow);
     });
   });
 
-  describe('delete', () => {
-    it('should delete a record', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({});
+  describe("delete", () => {
+    it("should delete a record", async () => {
+      (prisma.room.delete as jest.Mock).mockResolvedValue({});
 
-      await baseRepository.delete(1);
+      await repo.delete(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`DELETE FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.room.delete).toHaveBeenCalledWith({ where: { id: 1 } });
     });
   });
 });

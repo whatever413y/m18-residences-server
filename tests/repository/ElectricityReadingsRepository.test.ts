@@ -1,92 +1,93 @@
-import ElectricityReadingRepository from "../../src/repository/ElectricityReadingRepository"
-import pool from "../../src/config/Database"
+import { prisma } from "../../src/lib/prisma";
+import ElectricityReadingRepository from "../../src/repository/ElectricityReadingRepository";
 
-jest.mock('../../src/config/Database', () => ({
-  query: jest.fn() as jest.Mock, // Cast query to jest.Mock
+jest.mock("../../src/lib/prisma", () => ({
+  prisma: {
+    electricityReading: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+  },
 }));
 
-describe('RoomRepository', () => {
+describe("ElectricityReadingRepository", () => {
   const electricityReadingRepository = new ElectricityReadingRepository();
-  const tableName = 'Electricity_Readings';
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('getAll', () => {
-    it('should return all records', async () => {
-      const mockRows = [{ id: 1, name: 'Test' }];
-      (pool.query as jest.Mock).mockResolvedValue({ rows: mockRows });
+  describe("getAll", () => {
+    it("should return all records", async () => {
+      const mockRecords = [{ id: 1, tenantId: 2 }];
+      (prisma.electricityReading.findMany as jest.Mock).mockResolvedValue(mockRecords);
 
       const result = await electricityReadingRepository.getAll();
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName}`);
-      expect(result).toEqual(mockRows);
+      expect(prisma.electricityReading.findMany).toHaveBeenCalled();
+      expect(result).toEqual(mockRecords);
     });
   });
 
-  describe('getById', () => {
-    it('should return a record by ID', async () => {
-      const mockRow = { id: 1, name: 'Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("getById", () => {
+    it("should return a record by ID", async () => {
+      const mockRecord = { id: 1, tenantId: 2 };
+      (prisma.electricityReading.findUnique as jest.Mock).mockResolvedValue(mockRecord);
 
       const result = await electricityReadingRepository.getById(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName} WHERE id = $1`, [1]);
-      expect(result).toEqual(mockRow);
+      expect(prisma.electricityReading.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(result).toEqual(mockRecord);
     });
 
-    it('should return null if no record is found', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it("should return null if no record is found", async () => {
+      (prisma.electricityReading.findUnique as jest.Mock).mockResolvedValue(null);
 
       const result = await electricityReadingRepository.getById(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`SELECT * FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.electricityReading.findUnique).toHaveBeenCalledWith({ where: { id: 1 } });
       expect(result).toBeNull();
     });
   });
 
-  describe('create', () => {
-    it('should create a new record', async () => {
-      const fields = ['name'];
-      const values = ['Test'];
-      const mockRow = { id: 1, name: 'Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("create", () => {
+    it("should create a new record", async () => {
+      const inputData = { tenantId: 2, roomId: 3, prevReading: 100, currReading: 150, consumption: 50 };
+      const mockRecord = { id: 1, ...inputData };
+      (prisma.electricityReading.create as jest.Mock).mockResolvedValue(mockRecord);
 
-      const result = await electricityReadingRepository.create(fields, values);
+      const result = await electricityReadingRepository.create(inputData);
 
-      expect(pool.query).toHaveBeenCalledWith(
-        `INSERT INTO ${tableName} (name) VALUES ($1) RETURNING *`,
-        values
-      );
-      expect(result).toEqual(mockRow);
+      expect(prisma.electricityReading.create).toHaveBeenCalledWith({ data: inputData });
+      expect(result).toEqual(mockRecord);
     });
   });
 
-  describe('update', () => {
-    it('should update a record', async () => {
-      const fields = ['name'];
-      const values = ['Updated Test'];
-      const mockRow = { id: 1, name: 'Updated Test' };
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [mockRow] });
+  describe("update", () => {
+    it("should update a record", async () => {
+      const updateData = { currReading: 200, consumption: 100 };
+      const mockRecord = { id: 1, tenantId: 2, ...updateData };
+      (prisma.electricityReading.update as jest.Mock).mockResolvedValue(mockRecord);
 
-      const result = await electricityReadingRepository.update(1, fields, values);
+      const result = await electricityReadingRepository.update(1, updateData);
 
-      expect(pool.query).toHaveBeenCalledWith(
-        `UPDATE ${tableName} SET name = $1 WHERE id = $2 RETURNING *`,
-        [...values, 1]
-      );
-      expect(result).toEqual(mockRow);
+      expect(prisma.electricityReading.update).toHaveBeenCalledWith({ where: { id: 1 }, data: updateData });
+      expect(result).toEqual(mockRecord);
     });
   });
 
-  describe('delete', () => {
-    it('should delete a record', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({});
+  describe("delete", () => {
+    it("should delete a record", async () => {
+      const mockRecord = { id: 1, tenantId: 2 };
+      (prisma.electricityReading.delete as jest.Mock).mockResolvedValue(mockRecord);
 
-      await electricityReadingRepository.delete(1);
+      const result = await electricityReadingRepository.delete(1);
 
-      expect(pool.query).toHaveBeenCalledWith(`DELETE FROM ${tableName} WHERE id = $1`, [1]);
+      expect(prisma.electricityReading.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(result).toEqual(mockRecord);
     });
   });
 });

@@ -33,7 +33,7 @@ CREATE TABLE Electricity_Readings (
 
 CREATE TABLE Bills (
     id SERIAL PRIMARY KEY,
-    reading_id INT NOT NULL,
+    reading_id INT NOT NULL UNIQUE,
     tenant_id INT NOT NULL,
     room_charges DECIMAL(10,2) DEFAULT 0 NOT NULL,
     electric_charges DECIMAL(10,2) DEFAULT 0 NOT NULL,

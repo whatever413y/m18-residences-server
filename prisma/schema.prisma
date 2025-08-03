@@ -27,6 +27,7 @@ model Tenant {
   room      Room       @relation(fields: [roomId], references: [id])
   readings  ElectricityReading[]
   bills     Bill[]
+  joinDate DateTime   @default(now()) @map("join_date")
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 

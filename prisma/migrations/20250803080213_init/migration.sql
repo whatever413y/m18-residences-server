@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "public"."Tenants" ADD COLUMN     "join_date" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;

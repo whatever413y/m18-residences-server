@@ -9,6 +9,7 @@ type TenantWithRoomName = {
   updatedAt: Date;
   roomId: number;
   roomName?: string;
+  joinDate: Date;
 };
 class TenantRepository extends BaseRepository<Tenant> {
   async getAll(): Promise<TenantWithRoomName[]> {
@@ -24,6 +25,7 @@ class TenantRepository extends BaseRepository<Tenant> {
             name: true,
           },
         },
+        joinDate: true,
       },
     });
     return tenants.map(t => ({
@@ -33,6 +35,7 @@ class TenantRepository extends BaseRepository<Tenant> {
       updatedAt: t.updatedAt,
       roomId: t.roomId,
       roomName: t.room?.name,
+      joinDate: t.joinDate,
     }));
   }
 
@@ -40,13 +43,28 @@ class TenantRepository extends BaseRepository<Tenant> {
     return prisma.tenant.findUnique({ where: { id } });
   }
 
-  async create(data: any): Promise<Tenant> {
-    return prisma.tenant.create({ data });
-  }
+  async create(data: { name: string; roomId: number, joinDate: string}): Promise<Tenant> {
+  return prisma.tenant.create({
+    data: {
+      name: data.name,
+      roomId: data.roomId,
+      joinDate: new Date(data.joinDate),
+    },
+  });
+}
 
-  async update(id: number, data: any): Promise<Tenant> {
-    return prisma.tenant.update({ where: { id }, data });
-  }
+
+  async update(id: number, data: { name: string; roomId: number, joinDate: string}): Promise<Tenant> {
+  return prisma.tenant.update({
+    where: { id },
+    data: {
+      name: data.name,
+      roomId: data.roomId,
+      joinDate: new Date(data.joinDate), 
+    },
+  });
+}
+
 
   async delete(id: number): Promise<Tenant> {
     return prisma.tenant.delete({ where: { id } });

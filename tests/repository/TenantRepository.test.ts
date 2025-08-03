@@ -26,10 +26,11 @@ describe("TenantRepository (Prisma)", () => {
         {
           id: 1,
           name: "Test Tenant",
-          createdAt: "2025-08-01T00:00:00.000Z", // camelCase here
+          createdAt: "2025-08-01T00:00:00.000Z",
           updatedAt: "2025-08-01T00:00:00.000Z",
           roomId: 101,
           room: { name: "Room A" },
+          joinDate: new Date("2025-08-01"),
         },
       ];
       (prisma.tenant.findMany as jest.Mock).mockResolvedValue(mockTenants);
@@ -48,6 +49,7 @@ describe("TenantRepository (Prisma)", () => {
               name: true,
             },
           },
+          joinDate: true,
         },
       });
 
@@ -59,6 +61,7 @@ describe("TenantRepository (Prisma)", () => {
           updatedAt: "2025-08-01T00:00:00.000Z",
           roomId: 101,
           roomName: "Room A",
+          joinDate: new Date("2025-08-01"),
         },
       ]);
     });
@@ -94,10 +97,14 @@ describe("TenantRepository (Prisma)", () => {
       const mockTenant = { id: 1, name: "New Tenant" };
       (prisma.tenant.create as jest.Mock).mockResolvedValue(mockTenant);
 
-      const result = await tenantRepository.create({ name: "New Tenant" });
+      const result = await tenantRepository.create({
+        name: "New Tenant",
+        roomId: 0,
+        joinDate: new Date("2024-06-01").toISOString(),
+      });
 
       expect(prisma.tenant.create).toHaveBeenCalledWith({
-        data: { name: "New Tenant" },
+        data: { name: "New Tenant", roomId: 0, joinDate: expect.any(Date) },
       });
       expect(result).toEqual(mockTenant);
     });
@@ -110,11 +117,13 @@ describe("TenantRepository (Prisma)", () => {
 
       const result = await tenantRepository.update(1, {
         name: "Updated Tenant",
+        roomId: 0,
+        joinDate: new Date("2024-06-01").toISOString(),
       });
 
       expect(prisma.tenant.update).toHaveBeenCalledWith({
         where: { id: 1 },
-        data: { name: "Updated Tenant" },
+        data: { name: "Updated Tenant", roomId: 0, joinDate: new Date("2024-06-01") },
       });
       expect(result).toEqual(mockTenant);
     });

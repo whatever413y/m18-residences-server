@@ -1,5 +1,3 @@
-import { prisma } from "../lib/prisma";
-
 abstract class BaseRepository<T> {
   abstract getAll(): Promise<T[]>;
   abstract getById(id: number): Promise<T | null>;

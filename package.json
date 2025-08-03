@@ -3,13 +3,17 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
   "scripts": {
     "start": "tsc && node dist/index.js",
     "test": "jest",
     "prisma:generate": "npx prisma generate",
     "prisma:migrate": "npx prisma migrate dev --name init",
     "prisma:studio": "npx prisma studio",
-    "prisma:reset": "npx prisma migrate reset --force --skip-seed"
+    "prisma:reset": "npx prisma migrate reset --force --skip-seed",
+    "seed": "prisma db seed"
   },
   "keywords": [],
   "author": "",

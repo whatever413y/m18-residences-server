@@ -2,10 +2,31 @@ import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
-export const prisma =
-  globalForPrisma.prisma ||
-  new PrismaClient({
-    log: ['query'],
-  });
+const prismaInstance = globalForPrisma.prisma || new PrismaClient({
+  log: ['query'],
+});
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+// ✅ Middleware to auto-compute `consumption`
+prismaInstance.$use(async (params, next) => {
+  if (
+    params.model === 'ElectricityReading' &&
+    (params.action === 'create' || params.action === 'update')
+  ) {
+    const data = params.args.data;
+
+    const prev = data.prevReading;
+    const curr = data.currReading;
+
+    if (typeof prev === 'number' && typeof curr === 'number') {
+      data.consumption = curr - prev;
+    }
+  }
+
+  return next(params);
+});
+
+export const prisma = prismaInstance;
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.prisma = prisma;
+}

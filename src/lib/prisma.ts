@@ -1,50 +1,19 @@
 import { PrismaClient } from '@prisma/client';
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-
-const prismaInstance = globalForPrisma.prisma || new PrismaClient({
+// Create a single PrismaClient instance
+const prismaBase = new PrismaClient({
   log: ['query'],
 });
 
-// ✅ Middleware to auto-compute `consumption` for ElectricityReading
-prismaInstance.$use(async (params, next) => {
-  if (
-    params.model === 'ElectricityReading' &&
-    (params.action === 'create' || params.action === 'update')
-  ) {
-    const data = params.args.data;
+// Use global to hold PrismaClient instance to prevent multiple instances in dev
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClient;
+};
 
-    const prev = data.prevReading;
-    const curr = data.currReading;
-
-    if (typeof prev === 'number' && typeof curr === 'number') {
-      data.consumption = curr - prev;
-    }
-  }
-
-  return next(params);
-});
-
-// ✅ Middleware to auto-calculate totalAmount in Bill
-prismaInstance.$use(async (params, next) => {
-  if (
-    params.model === 'Bill' &&
-    (params.action === 'create' || params.action === 'update')
-  ) {
-    const data = params.args.data;
-
-    const roomCharges = data.roomCharges ?? 0;
-    const electricCharges = data.electricCharges ?? 0;
-    const additionalCharges = data.additionalCharges ?? 0;
-
-    data.totalAmount = roomCharges + electricCharges + additionalCharges;
-  }
-
-  return next(params);
-});
-
-export const prisma = prismaInstance;
-
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+export const prisma =
+  process.env.NODE_ENV === 'production'
+    ? prismaBase
+    : globalForPrisma.prisma || (() => {
+        globalForPrisma.prisma = prismaBase;
+        return prismaBase;
+      })();

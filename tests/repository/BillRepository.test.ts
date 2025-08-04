@@ -69,12 +69,10 @@ describe("BillRepository", () => {
         additionalDescription: "Extra fee",
       };
 
-      // Mock tenantWithRoom lookup
       (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({
         room: { rent: 100 },
       });
 
-      // Mock electricityReading lookup
       (prisma.electricityReading.findUnique as jest.Mock).mockResolvedValue({
         consumption: 15,
       });
@@ -84,10 +82,10 @@ describe("BillRepository", () => {
         tenantId: 2,
         readingId: 5,
         roomCharges: 100,
-        electricCharges: 150, // 15 * 10
+        electricCharges: 150,
         additionalCharges: 20,
         additionalDescription: "Extra fee",
-        totalAmount: 270, // 100 + 150 + 20
+        totalAmount: 270,
       };
 
       (prisma.bill.create as jest.Mock).mockResolvedValue(createdBill);
@@ -119,11 +117,59 @@ describe("BillRepository", () => {
       expect(result).toEqual(createdBill);
     });
 
+    it("should create a bill with no additionalDescription", async () => {
+      const input = {
+        tenantId: 3,
+        readingId: 6,
+        electricityRate: 5,
+        additionalCharges: 0,
+      };
+
+      (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({
+        room: { rent: 50 },
+      });
+
+      (prisma.electricityReading.findUnique as jest.Mock).mockResolvedValue({
+        consumption: 10,
+      });
+
+      const createdBill = {
+        id: 2,
+        tenantId: 3,
+        readingId: 6,
+        roomCharges: 50,
+        electricCharges: 50,
+        additionalCharges: 0,
+        additionalDescription: null,
+        totalAmount: 100,
+      };
+
+      (prisma.bill.create as jest.Mock).mockResolvedValue(createdBill);
+
+      const result = await billRepository.create(input);
+
+      expect(prisma.bill.create).toHaveBeenCalledWith({
+        data: {
+          tenantId: input.tenantId,
+          readingId: input.readingId,
+          roomCharges: 50,
+          electricCharges: 50,
+          additionalCharges: 0,
+          additionalDescription: null,
+          totalAmount: 100,
+        },
+      });
+
+      expect(result).toEqual(createdBill);
+    });
+
     it("should throw error if electricity reading not found", async () => {
       const input = {
         tenantId: 2,
         readingId: 5,
         electricityRate: 10,
+        additionalCharges: 20,
+        additionalDescription: "Extra fee",
       };
 
       (prisma.tenant.findUnique as jest.Mock).mockResolvedValue({

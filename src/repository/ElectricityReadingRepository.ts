@@ -14,6 +14,13 @@ class ElectricityReadingRepository extends BaseRepository<ElectricityReading> {
     });
   }
 
+  async getAllByTenantId(tenantId: number): Promise<ElectricityReading[]> {
+      return prisma.electricityReading.findMany({
+        where: { tenantId },
+        orderBy: { createdAt: "desc" },
+      });
+    }
+
   async getById(id: number): Promise<ElectricityReading | null> {
     return prisma.electricityReading.findUnique({ where: { id } });
   }

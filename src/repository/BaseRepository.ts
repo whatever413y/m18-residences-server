@@ -1,9 +1,11 @@
 abstract class BaseRepository<T> {
   abstract getAll(): Promise<T[]>;
   abstract getById(id: number): Promise<T | null>;
-  abstract create(data: any): Promise<T>;
-  abstract update(id: number, data: any): Promise<T>;
+  abstract create(data: T): Promise<T>;
+  abstract update(id: number, data: T): Promise<T>;
   abstract delete(id: number): Promise<T>;
+
+  getAllByTenantId?(tenantId: number): Promise<T[]>;
 }
 
 export default BaseRepository;

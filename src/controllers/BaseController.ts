@@ -16,10 +16,20 @@ abstract class BaseController<T> {
 
   getAllByTenantId = async (req: Request, res: Response) => {
     const tenantId = Number(req.params.tenantId);
-    console.log(`Fetching ${this.getRepositoryName()} for tenant ID: ${tenantId}`);
     try {
       const items = await this.repository.getAllByTenantId!(tenantId);
       res.json(items);
+    } catch (err) {
+      res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });
+      console.error(err);
+    }
+  };
+
+  getByTenantName = async (req: Request, res: Response) => {
+    const tenantName = req.params.tenantName;
+    try {
+      const item = await this.repository.getByTenantName!(tenantName);
+      res.json(item);
     } catch (err) {
       res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });
       console.error(err);

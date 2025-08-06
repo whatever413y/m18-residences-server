@@ -12,6 +12,7 @@ class BaseRoute<T> {
   private initializeRoutes() {
     this.router.get(`${this.path}`, this.controller.getAll);
     this.router.get(`${this.path}/tenant/:tenantId`, this.controller.getAllByTenantId);
+    this.router.get(`${this.path}/tenant/name/:tenantName`, this.controller.getByTenantName);
     this.router.get(`${this.path}/:id`, this.controller.getById);
     this.router.post(`${this.path}`, this.controller.create);
     this.router.put(`${this.path}/:id`, this.controller.update);

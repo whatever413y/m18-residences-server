@@ -17,6 +17,12 @@ class TenantRepository extends BaseRepository<Tenant> {
     return prisma.tenant.findUnique({ where: { id } });
   }
 
+  async getByTenantName(tenantName: string): Promise<Tenant | null> {
+    return prisma.tenant.findFirst({
+      where: { name: tenantName },
+    });
+  }
+
   async create(data: TenantData): Promise<Tenant> {
     return prisma.tenant.create({
       data: {

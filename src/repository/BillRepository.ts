@@ -27,7 +27,7 @@ class BillRepository extends BaseRepository<Bill> {
 
   async getById(id: number): Promise<Bill | null> {
     return prisma.bill.findFirst({
-      where: { id },
+      where: { tenantId: id },
       orderBy: { createdAt: "desc" },
       include: {
         reading: {

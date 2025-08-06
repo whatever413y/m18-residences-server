@@ -6,6 +6,7 @@ abstract class BaseRepository<T> {
   abstract delete(id: number): Promise<T>;
 
   getAllByTenantId?(tenantId: number): Promise<T[]>;
+  getByTenantName?(tenantName: string): Promise<T | null>;
 }
 
 export default BaseRepository;

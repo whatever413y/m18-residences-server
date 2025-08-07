@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import BaseController from "../controllers/BaseController";
-import { authenticate } from "../middleware/authMiddleware";
+import { authenticate, requireAdmin } from "../middleware/authMiddleware";
 
 class BaseRoute<T> {
   private router: Router;
@@ -18,11 +18,13 @@ class BaseRoute<T> {
       this.controller.getAllByTenantId
     );
     this.router.get(`${this.path}/:id`, authenticate, this.controller.getById);
-    this.router.post(`${this.path}`, authenticate, this.controller.create);
-    this.router.put(`${this.path}/:id`, authenticate, this.controller.update);
+
+    // Admin routes
+    this.router.post(`${this.path}`, requireAdmin, this.controller.create);
+    this.router.put(`${this.path}/:id`, requireAdmin, this.controller.update);
     this.router.delete(
       `${this.path}/:id`,
-      authenticate,
+      requireAdmin,
       this.controller.delete
     );
   }

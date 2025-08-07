@@ -7,6 +7,29 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 class AuthController {
   private tenantRepo = new TenantRepository();
 
+  async adminLogin(req: Request, res: Response) {
+    const { username, password } = req.body;
+
+    const adminUsername = process.env.ADMIN_USERNAME;
+    const adminPassword = process.env.ADMIN_PASSWORD;
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ error: "Username and password are required" });
+    }
+
+    if (username !== adminUsername || password !== adminPassword) {
+      return res.status(401).json({ error: "Invalid admin credentials" });
+    }
+
+    const token = jwt.sign({ role: "admin", username }, JWT_SECRET, {
+      expiresIn: "1h",
+    });
+
+    return res.status(200).json({ token, user: { role: "admin", username } });
+  }
+
   async login(req: Request, res: Response) {
     const { name } = req.body;
 

@@ -18,12 +18,20 @@ const app: Express = express();
 const PORT: number = Number(process.env.PORT) || 3001;
 
 // Middleware
+const allowedOrigins = [
+  "http://localhost:45794",
+  process.env.PRODUCTION_URL,
+];
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? ["https://your-production-site.com"]
-    : ["http://localhost:45794"],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS: " + origin));
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE"],
-  // credentials: true,
 }));
 
 app.use(express.urlencoded({ extended: true }) as RequestHandler);

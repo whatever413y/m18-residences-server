@@ -13,6 +13,7 @@
     "prisma:migrate": "npx prisma migrate dev --name init",
     "prisma:studio": "npx prisma studio",
     "prisma:reset": "npx prisma migrate reset --force --skip-seed",
+    "prisma:deploy": "npx prisma migrate deploy",
     "seed": "prisma db seed"
   },
   "keywords": [],

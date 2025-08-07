@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import BaseController from "../controllers/BaseController";
+import { authenticate } from "../middleware/authMiddleware";
 
 class BaseRoute<T> {
   private router: Router;
@@ -10,24 +11,44 @@ class BaseRoute<T> {
   }
 
   private initializeRoutes() {
-    this.router.get(`${this.path}`, this.controller.getAll);
-    this.router.get(`${this.path}/tenant/:tenantId`, this.controller.getAllByTenantId);
-    this.router.get(`${this.path}/tenant/name/:tenantName`, this.controller.getByTenantName);
-    this.router.get(`${this.path}/:id`, this.controller.getById);
-    this.router.post(`${this.path}`, this.controller.create);
-    this.router.put(`${this.path}/:id`, this.controller.update);
-    this.router.delete(`${this.path}/:id`, this.controller.delete);
+    this.router.get(`${this.path}`, authenticate, this.controller.getAll);
+    this.router.get(
+      `${this.path}/tenant/:tenantId`,
+      authenticate,
+      this.controller.getAllByTenantId
+    );
+    this.router.get(`${this.path}/:id`, authenticate, this.controller.getById);
+    this.router.post(`${this.path}`, authenticate, this.controller.create);
+    this.router.put(`${this.path}/:id`, authenticate, this.controller.update);
+    this.router.delete(
+      `${this.path}/:id`,
+      authenticate,
+      this.controller.delete
+    );
   }
 
   public addCustomPost(
     endpoint: string,
-    handler: (req: Request, res: Response) => void
+    handler: (req: Request, res: Response) => void,
+    protectedRoute = true
   ) {
-    this.router.post(`${this.path}${endpoint}`, handler);
+    if (protectedRoute) {
+      this.router.post(`${this.path}${endpoint}`, authenticate, handler);
+    } else {
+      this.router.post(`${this.path}${endpoint}`, handler);
+    }
   }
 
-  public addCustomGet(endpoint: string, handler: (req: Request, res: Response) => void) {
-    this.router.get(`${this.path}${endpoint}`, handler);
+  public addCustomGet(
+    endpoint: string,
+    handler: (req: Request, res: Response) => void,
+    protectedRoute = true
+  ) {
+    if (protectedRoute) {
+      this.router.get(`${this.path}${endpoint}`, authenticate, handler);
+    } else {
+      this.router.get(`${this.path}${endpoint}`, handler);
+    }
   }
 
   public getRouter() {

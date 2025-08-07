@@ -10,6 +10,7 @@ import RoomRoute from "./routes/RoomRoute";
 import ElectricityReadingRoute from "./routes/ElectricityReadingRoute";
 import BillRoute from "./routes/BillRoute";
 import errorHandler from "./middleware/errorHandler";
+import AuthRoute from "./routes/AuthRoute";
 
 dotenv.config();
 
@@ -29,6 +30,7 @@ app.use(express.urlencoded({ extended: true }) as RequestHandler);
 app.use(express.json() as RequestHandler);
 
 // Routes
+app.use(AuthRoute);
 app.use(TenantRoute);
 app.use(RoomRoute);
 app.use(ElectricityReadingRoute);

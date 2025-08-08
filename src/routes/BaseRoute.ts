@@ -20,10 +20,10 @@ class BaseRoute<T> {
     this.router.get(`${this.path}/:id`, authenticate, this.controller.getById);
 
     // Admin routes
-    this.router.post(`${this.path}`, requireAdmin, this.controller.create);
-    this.router.put(`${this.path}/:id`, requireAdmin, this.controller.update);
+    this.router.post(`${this.path}`, authenticate, requireAdmin, this.controller.create);
+    this.router.put(`${this.path}/:id`, authenticate, requireAdmin, this.controller.update);
     this.router.delete(
-      `${this.path}/:id`,
+      `${this.path}/:id`, authenticate,
       requireAdmin,
       this.controller.delete
     );

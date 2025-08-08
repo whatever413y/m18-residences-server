@@ -12,6 +12,18 @@ async function main() {
     ],
     skipDuplicates: true,
   });
+
+  const blueRoom = await prisma.room.findUnique({ where: { name: "Blue" } });
+  await prisma.tenant.createMany({
+    data: [
+      {
+        roomId: blueRoom!.id,
+        name: 'dummy',
+        joinDate: new Date('2023-01-15'),
+      },
+    ],
+    skipDuplicates: true,
+  });
 }
 
 main()

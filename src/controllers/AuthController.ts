@@ -50,7 +50,6 @@ class AuthController {
 
       return res.json({ token, tenant });
     } catch (error) {
-      console.error("Login error:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
   }

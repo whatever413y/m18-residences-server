@@ -3,12 +3,12 @@ import { prisma } from "../src/lib/prisma";
 async function main() {
   await prisma.room.createMany({
     data: [
-      { name: "Blue", rent: 1500 },
-      { name: "Green", rent: 1300 },
-      { name: "Orange", rent: 1400 },
-      { name: "Pink", rent: 1200 },
-      { name: "Violet", rent: 1100 },
-      { name: "Yellow", rent: 1000 },
+      { name: "Blue", rent: 10000 },
+      { name: "Green", rent: 8500 },
+      { name: "Orange", rent: 3500 },
+      { name: "Pink", rent: 5500 },
+      { name: "Violet", rent: 6500 },
+      { name: "Yellow", rent: 6500 },
     ],
     skipDuplicates: true,
   });
@@ -18,7 +18,7 @@ async function main() {
     data: [
       {
         roomId: blueRoom!.id,
-        name: 'dummy',
+        name: 'DUMMY',
         joinDate: new Date('2023-01-15'),
       },
     ],

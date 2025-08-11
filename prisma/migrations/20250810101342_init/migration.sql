@@ -14,6 +14,8 @@ CREATE TABLE "public"."Tenants" (
     "id" SERIAL NOT NULL,
     "room_id" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "join_date" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -41,13 +43,23 @@ CREATE TABLE "public"."Bills" (
     "tenant_id" INTEGER NOT NULL,
     "room_charges" INTEGER NOT NULL DEFAULT 0,
     "electric_charges" INTEGER NOT NULL DEFAULT 0,
-    "additional_charges" INTEGER NOT NULL DEFAULT 0,
-    "additional_description" TEXT,
     "total_amount" INTEGER NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "Bills_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "public"."Additional_Charges" (
+    "id" SERIAL NOT NULL,
+    "bill_id" INTEGER NOT NULL,
+    "amount" INTEGER NOT NULL DEFAULT 0,
+    "description" TEXT NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Additional_Charges_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -73,3 +85,6 @@ ALTER TABLE "public"."Bills" ADD CONSTRAINT "Bills_readingId_fkey" FOREIGN KEY (
 
 -- AddForeignKey
 ALTER TABLE "public"."Bills" ADD CONSTRAINT "Bills_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "public"."Tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "public"."Additional_Charges" ADD CONSTRAINT "Additional_Charges_bill_id_fkey" FOREIGN KEY ("bill_id") REFERENCES "public"."Bills"("id") ON DELETE CASCADE ON UPDATE CASCADE;

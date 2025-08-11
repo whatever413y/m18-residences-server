@@ -13,9 +13,9 @@ class BaseRoute<T> {
   private initializeRoutes() {
     this.router.get(`${this.path}`, authenticate, this.controller.getAll);
     this.router.get(
-      `${this.path}/tenant/:tenantId`,
+      `${this.path}/tenant/:id`,
       authenticate,
-      this.controller.getAllByTenantId
+      this.controller.getAllById
     );
     this.router.get(`${this.path}/:id`, authenticate, this.controller.getById);
 

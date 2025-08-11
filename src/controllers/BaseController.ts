@@ -14,10 +14,10 @@ abstract class BaseController<T> {
     }
   };
 
-  getAllByTenantId = async (req: Request, res: Response) => {
-    const tenantId = Number(req.params.tenantId);
+  getAllById = async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
     try {
-      const items = await this.repository.getAllByTenantId!(tenantId);
+      const items = await this.repository.getAllById!(id);
       res.json(items);
     } catch (err) {
       res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });

@@ -2,18 +2,34 @@ import BaseRepository from "./BaseRepository";
 import { prisma } from "../lib/prisma";
 import { Bill } from "@prisma/client";
 
-type BillData = Omit<Bill, "id" | "totalAmount" | "createdAt" | "updatedAt">;
+type AdditionalChargeInput = {
+  amount: number;
+  description: string;
+};
 
-class BillRepository extends BaseRepository<Bill> {
+type BillData = Omit<
+  Bill,
+  | "id"
+  | "totalAmount"
+  | "createdAt"
+  | "updatedAt"
+> & {
+  additionalCharges: AdditionalChargeInput[];
+};
+
+class BillRepository extends BaseRepository<Bill, BillData> {
   async getAll(): Promise<Bill[]> {
-    return prisma.bill.findMany({ orderBy: { createdAt: "desc" } });
+    return prisma.bill.findMany({ orderBy: { createdAt: "desc" }, include: {
+      additionalCharges: true,
+    }, });
   }
 
-  async getAllByTenantId(tenantId: number): Promise<Bill[]> {
+  async getAllById(tenantId: number): Promise<Bill[]> {
     return prisma.bill.findMany({
       where: { tenantId },
       orderBy: { createdAt: "desc" },
       include: {
+        additionalCharges: true,
         reading: {
           select: {
             prevReading: true,
@@ -30,6 +46,7 @@ class BillRepository extends BaseRepository<Bill> {
       where: { tenantId: id },
       orderBy: { createdAt: "desc" },
       include: {
+        additionalCharges: true,
         reading: {
           select: {
             prevReading: true,
@@ -40,33 +57,80 @@ class BillRepository extends BaseRepository<Bill> {
       },
     });
   }
-
+  
   async create(data: BillData): Promise<Bill> {
-    const totalAmount =
-      (data.roomCharges ?? 0) +
-      (data.electricCharges ?? 0) +
-      (data.additionalCharges ?? 0);
+    const { additionalCharges, ...billData } = data;
 
-    return prisma.bill.create({
-      data: {
-        ...data,
-        totalAmount,
-      },
+    const additionalChargesTotal = additionalCharges.reduce(
+      (acc, curr) => acc + curr.amount,
+      0
+    );
+
+    const totalAmount =
+      (billData.roomCharges ?? 0) +
+      (billData.electricCharges ?? 0) +
+      additionalChargesTotal;
+
+    return prisma.$transaction(async (tx) => {
+      const bill = await tx.bill.create({
+        data: {
+          ...billData,
+          totalAmount,
+        },
+      });
+
+      for (const charge of additionalCharges) {
+        await tx.additionalCharge.create({
+          data: {
+            billId: bill.id,
+            amount: charge.amount,
+            description: charge.description,
+          },
+        });
+      }
+
+      return bill;
     });
   }
 
-  async update(id: number, data: BillData): Promise<Bill> {
-    const totalAmount =
-      (data.roomCharges ?? 0) +
-      (data.electricCharges ?? 0) +
-      (data.additionalCharges ?? 0);
+  async update(
+    id: number,
+    data: BillData,
+  ): Promise<Bill> {
+    const { additionalCharges: _, ...billData } = data;
 
-    return prisma.bill.update({
-      where: { id },
-      data: {
-        ...data,
-        totalAmount,
-      },
+    const additionalChargesTotal = data.additionalCharges.reduce(
+      (acc, curr) => acc + curr.amount,
+      0
+    );
+
+    const totalAmount =
+      (billData.roomCharges ?? 0) +
+      (billData.electricCharges ?? 0) +
+      additionalChargesTotal;
+
+    return prisma.$transaction(async (tx) => {
+      const bill = await tx.bill.update({
+        where: { id },
+        data: {
+          ...billData,
+          totalAmount,
+        },
+      });
+
+      await tx.additionalCharge.deleteMany({ where: { billId: id } });
+
+      for (const charge of data.additionalCharges) {
+        await tx.additionalCharge.create({
+          data: {
+            billId: id,
+            amount: charge.amount,
+            description: charge.description,
+          },
+        });
+      }
+
+      return bill;
     });
   }
 

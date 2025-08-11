@@ -1,12 +1,12 @@
-abstract class BaseRepository<T> {
-  abstract getAll(): Promise<T[]>;
-  abstract getById(id: number): Promise<T | null>;
-  abstract create(data: T): Promise<T>;
-  abstract update(id: number, data: T): Promise<T>;
-  abstract delete(id: number): Promise<T>;
+abstract class BaseRepository<TModel, TCreate = Partial<TModel>, TUpdate = Partial<TModel>> {
+  abstract getAll(): Promise<TModel[]>;
+  abstract getById(id: number): Promise<TModel | null>;
+  abstract create(data: TCreate): Promise<TModel>;
+  abstract update(id: number, data: TUpdate): Promise<TModel>;
+  abstract delete(id: number): Promise<TModel>;
 
-  getAllByTenantId?(tenantId: number): Promise<T[]>;
-  getByTenantName?(tenantName: string): Promise<T | null>;
+  getAllById?(id: number): Promise<TModel[]>;
+  getByTenantName?(tenantName: string): Promise<TModel | null>;
 }
 
 export default BaseRepository;

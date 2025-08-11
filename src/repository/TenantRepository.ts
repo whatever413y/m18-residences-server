@@ -24,28 +24,27 @@ class TenantRepository extends BaseRepository<Tenant> {
   }
 
   async create(data: TenantData): Promise<Tenant> {
-    return prisma.tenant.create({
-      data: {
-        name: data.name,
-        roomId: data.roomId,
-        joinDate: new Date(data.joinDate),
-      },
-    });
-  }
+  return prisma.tenant.create({
+    data: {
+      name: data.name,
+      roomId: data.roomId,
+      joinDate: new Date(data.joinDate),
+    },
+  });
+}
 
-  async update(
-    id: number,
-    data: TenantData
-  ): Promise<Tenant> {
-    return prisma.tenant.update({
-      where: { id },
-      data: {
-        name: data.name,
-        roomId: data.roomId,
-        joinDate: new Date(data.joinDate),
-      },
-    });
-  }
+async update(id: number, data: TenantData): Promise<Tenant> {
+  return prisma.tenant.update({
+    where: { id },
+    data: {
+      name: data.name,
+      roomId: data.roomId,
+      joinDate: new Date(data.joinDate),
+      isActive: data.isActive,
+    },
+  });
+}
+
 
   async delete(id: number): Promise<Tenant> {
     return prisma.tenant.delete({ where: { id } });

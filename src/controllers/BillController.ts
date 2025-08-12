@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { Bill } from "@prisma/client";
 import BillRepository from "../repository/BillRepository";
 import BaseController from "./BaseController";
-import { uploadFile } from "../lib/r2";
+import { uploadFile } from "../middleware/r2";
 
 class BillController extends BaseController<Bill> {
   protected repository = new BillRepository();
@@ -12,11 +12,14 @@ class BillController extends BaseController<Bill> {
       let receiptUrl: string | undefined;
 
       if (req.file) {
-        receiptUrl = await uploadFile(
-          `receipts/${Date.now()}-t${req.body.tenantId}r${req.body.readingId}`,
+        const fullUrl = await uploadFile(
+          `receipts/${req.body.tenantId}/${Date.now()}-r${req.body.readingId}`,
           req.file.buffer,
           req.file.mimetype
         );
+        const urlParts = fullUrl.split("/");
+        const filename = urlParts[urlParts.length - 1];
+        receiptUrl = filename;
       }
 
       let additionalChargesParsed;

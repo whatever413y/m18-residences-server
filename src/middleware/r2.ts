@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -20,7 +21,17 @@ export async function uploadFile(key: string, fileBuffer: Buffer, contentType: s
     ContentType: contentType,
   });
   await r2Client.send(command);
-  return `${process.env.R2_PUBLIC_URL}/${key}`;
+  return `${process.env.R2_URL}/${key}`;
+}
+
+export async function getSignedUrlForRead(key: string, expiresInSeconds = 1200) {
+  const command = new GetObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME!,
+    Key: key,
+  });
+
+  const signedUrl = await getSignedUrl(r2Client, command, { expiresIn: expiresInSeconds });
+  return signedUrl;
 }
 
 export async function getFile(key: string) {

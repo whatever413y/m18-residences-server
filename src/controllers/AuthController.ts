@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import TenantRepository from "../repository/TenantRepository";
+import { getSignedUrlForRead } from "../middleware/r2";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
@@ -45,7 +46,7 @@ class AuthController {
       }
 
       const token = jwt.sign({ id: tenant.id, name: tenant.name }, JWT_SECRET, {
-        expiresIn: "10m",
+        expiresIn: "20m",
       });
 
       return res.json({ token, tenant });
@@ -56,6 +57,17 @@ class AuthController {
   async validateToken(req: Request, res: Response) {
     const user = (req as any).user;
     return res.status(200).json({ valid: true, user });
+  }
+
+  async getReceiptSignedUrl(req: Request, res: Response) {
+    try {
+      const { tenantId, filename } = req.params;
+      const key = `receipts/${tenantId}/${filename}`;
+      const url = await getSignedUrlForRead(key, 1200);
+      return res.json({ url });
+    } catch (error) {
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
   }
 }
 

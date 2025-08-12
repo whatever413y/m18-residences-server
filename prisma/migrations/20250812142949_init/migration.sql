@@ -44,6 +44,8 @@ CREATE TABLE "public"."Bills" (
     "room_charges" INTEGER NOT NULL DEFAULT 0,
     "electric_charges" INTEGER NOT NULL DEFAULT 0,
     "total_amount" INTEGER NOT NULL,
+    "receipt_url" TEXT,
+    "paid" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 

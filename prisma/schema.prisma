@@ -59,6 +59,8 @@ model Bill {
   roomCharges     Int                 @default(0) @map("room_charges")
   electricCharges Int                 @default(0) @map("electric_charges")
   totalAmount     Int                 @map("total_amount")
+  receiptUrl      String?             @map("receipt_url")
+  paid            Boolean             @default(false)
   reading         ElectricityReading  @relation(fields: [readingId], references: [id])
   tenant          Tenant              @relation(fields: [tenantId], references: [id])
   additionalCharges AdditionalCharge[]
@@ -67,7 +69,6 @@ model Bill {
 
   @@map("Bills")
 }
-
 
 model AdditionalCharge {
   id          Int     @id @default(autoincrement())

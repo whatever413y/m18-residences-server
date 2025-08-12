@@ -7,21 +7,19 @@ type AdditionalChargeInput = {
   description: string;
 };
 
-type BillData = Omit<
-  Bill,
-  | "id"
-  | "totalAmount"
-  | "createdAt"
-  | "updatedAt"
-> & {
+type BillData = Omit<Bill, "id" | "totalAmount" | "createdAt" | "updatedAt"> & {
   additionalCharges: AdditionalChargeInput[];
+  receiptUrl: string;
 };
 
 class BillRepository extends BaseRepository<Bill, BillData> {
   async getAll(): Promise<Bill[]> {
-    return prisma.bill.findMany({ orderBy: { createdAt: "desc" }, include: {
-      additionalCharges: true,
-    }, });
+    return prisma.bill.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        additionalCharges: true,
+      },
+    });
   }
 
   async getAllById(tenantId: number): Promise<Bill[]> {
@@ -57,7 +55,7 @@ class BillRepository extends BaseRepository<Bill, BillData> {
       },
     });
   }
-  
+
   async create(data: BillData): Promise<Bill> {
     const { additionalCharges, ...billData } = data;
 
@@ -93,38 +91,40 @@ class BillRepository extends BaseRepository<Bill, BillData> {
     });
   }
 
-  async update(
-    id: number,
-    data: BillData,
-  ): Promise<Bill> {
-    const { additionalCharges: _, ...billData } = data;
+  async update(id: number, data: BillData): Promise<Bill> {
+    const { additionalCharges, receiptUrl, ...billData } = data;
+    
 
-    const additionalChargesTotal = data.additionalCharges.reduce(
-      (acc, curr) => acc + curr.amount,
+    const additionalChargesTotal = additionalCharges.reduce(
+      (acc, curr) => Number(acc) + Number(curr.amount),
       0
     );
 
     const totalAmount =
-      (billData.roomCharges ?? 0) +
-      (billData.electricCharges ?? 0) +
-      additionalChargesTotal;
+      (billData.roomCharges ?? 0) + (billData.electricCharges ?? 0) + additionalChargesTotal;
 
     return prisma.$transaction(async (tx) => {
+      let paid = false;
+      if (receiptUrl != null) {
+        paid = true;
+      }
       const bill = await tx.bill.update({
         where: { id },
         data: {
           ...billData,
           totalAmount,
+          paid,
+          receiptUrl,
         },
       });
 
       await tx.additionalCharge.deleteMany({ where: { billId: id } });
 
-      for (const charge of data.additionalCharges) {
+      for (const charge of additionalCharges) {
         await tx.additionalCharge.create({
           data: {
             billId: id,
-            amount: charge.amount,
+            amount: Number(charge.amount),
             description: charge.description,
           },
         });

@@ -1,4 +1,5 @@
 import { JwtPayload } from "jsonwebtoken";
+import { File as MulterFile } from "multer";
 
 declare global {
   namespace Express {
@@ -7,6 +8,8 @@ declare global {
         id: number;
         name: string;
       };
+      file?: MulterFile;           
+      files?: MulterFile[];       
     }
   }
 }

@@ -13,5 +13,10 @@ router.get(
   authenticateToken,
   (req, res) => controller.getReceiptSignedUrl(req, res)
 );
+router.get(
+  "/api/auth/payments/:filename",
+  authenticateToken,
+  (req, res) => controller.getPaymentSignedUrl(req, res)
+);
 
 export default router;

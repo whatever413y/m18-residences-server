@@ -63,7 +63,18 @@ class AuthController {
     try {
       const { tenantId, filename } = req.params;
       const key = `receipts/${tenantId}/${filename}`;
-      const url = await getSignedUrlForRead(key, 1200);
+      const url = await getSignedUrlForRead(key, 600);
+      return res.json({ url });
+    } catch (error) {
+      return res.status(500).json({ error: "Internal Server Error" });
+    }
+  }
+
+  async getPaymentSignedUrl(req: Request, res: Response) {
+    try {
+      const { filename } = req.params;
+      const key = `payments/${filename}.png`;
+      const url = await getSignedUrlForRead(key, 600);
       return res.json({ url });
     } catch (error) {
       return res.status(500).json({ error: "Internal Server Error" });

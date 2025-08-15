@@ -24,7 +24,7 @@ export async function uploadFile(key: string, fileBuffer: Buffer, contentType: s
   return `${process.env.R2_URL}/${key}`;
 }
 
-export async function getSignedUrlForRead(key: string, expiresInSeconds = 1200) {
+export async function getSignedUrlForRead(key: string, expiresInSeconds = 600) {
   const command = new GetObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME!,
     Key: key,

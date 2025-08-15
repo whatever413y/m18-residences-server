@@ -3,17 +3,21 @@ import { Bill } from "@prisma/client";
 import BillRepository from "../repository/BillRepository";
 import BaseController from "./BaseController";
 import { uploadFile } from "../middleware/r2";
+import TenantRepository from "../repository/TenantRepository";
 
 class BillController extends BaseController<Bill> {
   protected repository = new BillRepository();
+  protected tenantRepo = new TenantRepository();
 
   update = async (req: Request, res: Response) => {
     try {
       let receiptUrl: string | undefined;
 
+      const tenantName = await this.tenantRepo.getById(req.body.tenantId);
+
       if (req.file) {
         const fullUrl = await uploadFile(
-          `receipts/${req.body.tenantId}/${Date.now()}-r${req.body.readingId}`,
+          `receipts/${tenantName}/${Date.now()}-r${req.body.readingId}`,
           req.file.buffer,
           req.file.mimetype
         );

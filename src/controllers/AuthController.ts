@@ -61,8 +61,8 @@ class AuthController {
 
   async getReceiptSignedUrl(req: Request, res: Response) {
     try {
-      const { tenantId, filename } = req.params;
-      const key = `receipts/${tenantId}/${filename}`;
+      const { tenantName, filename } = req.params;
+      const key = `receipts/${tenantName}/${filename}`;
       const url = await getSignedUrlForRead(key, 600);
       return res.json({ url });
     } catch (error) {

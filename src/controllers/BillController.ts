@@ -13,7 +13,7 @@ class BillController extends BaseController<Bill> {
     try {
       let receiptUrl: string | undefined;
 
-      const tenantName = await this.tenantRepo.getById(req.body.tenantId);
+      const tenantName = await this.tenantRepo.getById(Number(req.body.tenantId));
 
       if (req.file) {
         const fullUrl = await uploadFile(

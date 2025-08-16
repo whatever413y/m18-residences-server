@@ -1,7 +1,11 @@
-node_modules
-dist
+# ---- Rust ----
+/target/            
+**/*.rs.bk          
+
+# ---- Environment & Config ----
 .env
-package-lock.json
-pnpm-lock.yaml
-.vscode
-/src/generated/prisma
+
+# ---- IDEs & Editors ----
+.vscode/
+.idea/
+.DS_Store

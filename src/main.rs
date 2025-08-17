@@ -3,6 +3,7 @@ mod middleware;
 mod routes;
 mod entities;
 mod repository;
+mod services;
 
 use axum::{response::Json, routing::get, Extension, Router};
 use std::{net::SocketAddr, time::Duration};
@@ -32,6 +33,7 @@ async fn main() {
     let app = Router::new()
         .nest("/api/rooms", room_routes())
         .nest("/api/tenants", tenant_routes())
+        .nest("/api/electricity-readings", routes::electricity_reading_routes::electricity_reading_routes())
         .route("/", get(|| async { "Rental Management API is up" }))
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         .layer(cors_layer())

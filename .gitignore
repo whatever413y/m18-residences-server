@@ -1,5 +1,6 @@
 # ---- Rust ----
-/target/            
+/target/      
+Cargo.lock      
 **/*.rs.bk          
 
 # ---- Environment & Config ----
@@ -9,3 +10,8 @@
 .vscode/
 .idea/
 .DS_Store
+
+
+# Added by cargo
+
+/target

@@ -1,4 +1,4 @@
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait, QueryFilter, QueryOrder, TransactionTrait};
 use crate::entities::additional_charge;
 
 #[allow(dead_code)]
@@ -9,12 +9,11 @@ pub async fn get_all(db: &DatabaseConnection) -> Result<Vec<additional_charge::M
         .await
 }
 
-#[allow(dead_code)]
-pub async fn get_all_by_bill_id(db: &DatabaseConnection, bill_id: i32) -> Result<Vec<additional_charge::Model>, DbErr> {
+pub async fn get_all_by_bill_id<C>(conn: &C, bill_id: i32) -> Result<Vec<additional_charge::Model>, DbErr> where C: ConnectionTrait + TransactionTrait {
     additional_charge::Entity::find()
         .filter(additional_charge::Column::BillId.eq(bill_id))
         .order_by_asc(additional_charge::Column::CreatedAt)
-        .all(db)
+        .all(conn)
         .await
 }
 

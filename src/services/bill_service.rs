@@ -1,18 +1,12 @@
 use crate::{
     entities::{additional_charge, bill, electricity_reading},
-    repository::{additional_charge_repo, bill_repo},
+    repository::{additional_charge_repo, bill_repo, electricity_reading_repo},
 };
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, DatabaseTransaction, DbErr, Set, TransactionError, TransactionTrait,
+    ActiveModelTrait, DatabaseConnection, DatabaseTransaction, DbErr, Set, TransactionError,
+    TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
-use chrono::Utc;
-
-#[derive(Serialize)]
-pub struct BillWithCharges {
-    pub bill: bill::Model,
-    pub additional_charges: Vec<additional_charge::Model>,
-}
 
 #[derive(Serialize)]
 pub struct BillWithChargesAndReading {
@@ -52,35 +46,43 @@ fn build_bill_active_model(input: &BillInput) -> bill::ActiveModel {
         reading_id: Set(input.reading_id),
         room_charges: Set(input.room_charges),
         electric_charges: Set(input.electric_charges),
-        total_amount: Set(calculate_total(input.room_charges, input.electric_charges, &input.additional_charges)),
+        total_amount: Set(calculate_total(
+            input.room_charges,
+            input.electric_charges,
+            &input.additional_charges,
+        )),
         paid: Set(determine_paid_status(&input.receipt_url)),
         receipt_url: Set(input.receipt_url.clone()),
         ..Default::default()
     }
 }
 
-fn build_charge_models(bill_id: i32, charges: &[AdditionalChargeInput]) -> Vec<additional_charge::ActiveModel> {
-    let now = Utc::now().naive_utc();
-    charges.iter().map(|c| additional_charge::ActiveModel {
-        bill_id: Set(bill_id),
-        amount: Set(c.amount),
-        description: Set(c.description.clone()),
-        created_at: Set(now),
-        updated_at: Set(now),
-        ..Default::default()
-    }).collect()
+fn build_charge_models(
+    bill_id: i32,
+    charges: &[AdditionalChargeInput],
+) -> Vec<additional_charge::ActiveModel> {
+    charges
+        .iter()
+        .map(|c| additional_charge::ActiveModel {
+            bill_id: Set(bill_id),
+            amount: Set(c.amount),
+            description: Set(c.description.clone()),
+            ..Default::default()
+        })
+        .collect()
 }
 
-// Insert multiple charges via repo
-async fn insert_charges(txn: &DatabaseTransaction, bill_id: i32, charges: &[AdditionalChargeInput]) -> Result<(), DbErr> {
+async fn insert_charges(
+    txn: &DatabaseTransaction,
+    bill_id: i32,
+    charges: &[AdditionalChargeInput],
+) -> Result<(), DbErr> {
     for charge in build_charge_models(bill_id, charges) {
-        // Use the repo's create function
         additional_charge_repo::create(txn, charge).await?;
     }
     Ok(())
 }
 
-// Delete all charges for a bill via repo
 async fn delete_charges(txn: &DatabaseTransaction, bill_id: i32) -> Result<(), DbErr> {
     additional_charge_repo::delete_many_by_bill_id(txn, bill_id).await
 }
@@ -94,39 +96,110 @@ fn map_txn_err<T>(res: Result<T, TransactionError<DbErr>>) -> Result<T, DbErr> {
 
 // ---------- public methods ----------
 
-pub async fn get_bills_for_tenant(
+/// GET all bills with charges and reading
+pub async fn get_all_bills_with_details(
     db: &DatabaseConnection,
-    tenant_id: i32,
 ) -> Result<Vec<BillWithChargesAndReading>, DbErr> {
-    let raw_data = bill_repo::get_bills_with_readings_and_charges_by_tenant(db, tenant_id).await?;
+    let bills = bill_repo::get_all(db).await?;
+    let mut result = Vec::with_capacity(bills.len());
 
-    let result = raw_data.into_iter().map(|(bill, reading, charges)| BillWithChargesAndReading {
-        bill,
-        additional_charges: charges,
-        reading,
-    }).collect::<Vec<_>>();
+    for bill_model in bills {
+        let charges = additional_charge_repo::get_all_by_bill_id(db, bill_model.id).await?;
+        let reading = electricity_reading_repo::get_by_id(db, bill_model.reading_id).await?;
 
-    println!("✅ get_bills_for_tenant: fetched {} bills for tenant {}", result.len(), tenant_id);
+        result.push(BillWithChargesAndReading {
+            bill: bill_model,
+            additional_charges: charges,
+            reading,
+        });
+    }
 
     Ok(result)
 }
 
-pub async fn create_bill(db: &DatabaseConnection, input: BillInput) -> Result<bill::Model, DbErr> {
+/// GET the most recent bill for a tenant with charges and reading
+pub async fn get_tenant_bill_with_details(
+    db: &DatabaseConnection,
+    tenant_id: i32,
+) -> Result<Option<BillWithChargesAndReading>, DbErr> {
+    if let Some(bill_model) = bill_repo::get_latest_by_tenant_id(db, tenant_id).await? {
+        let charges = additional_charge_repo::get_all_by_bill_id(db, bill_model.id).await?;
+        let reading = electricity_reading_repo::get_by_id(db, bill_model.reading_id).await?;
+
+        Ok(Some(BillWithChargesAndReading {
+            bill: bill_model,
+            additional_charges: charges,
+            reading,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// GET all the bills for a tenant with charges and readings
+pub async fn get_all_bills_for_tenant(
+    db: &DatabaseConnection,
+    tenant_id: i32,
+) -> Result<Vec<BillWithChargesAndReading>, DbErr> {
+    let bills = bill_repo::get_all_by_tenant_id(db, tenant_id).await?;
+    let mut result = Vec::with_capacity(bills.len());
+
+    for bill_model in bills {
+        let charges = additional_charge_repo::get_all_by_bill_id(db, bill_model.id).await?;
+        let reading = electricity_reading_repo::get_by_id(db, bill_model.reading_id).await?;
+
+        result.push(BillWithChargesAndReading {
+            bill: bill_model,
+            additional_charges: charges,
+            reading,
+        });
+    }
+
+    Ok(result)
+}
+
+
+// CREATE a new bill
+pub async fn create_bill(
+    db: &DatabaseConnection,
+    input: BillInput,
+) -> Result<BillWithChargesAndReading, DbErr> {
     map_txn_err(
-        db.transaction::<_, bill::Model, DbErr>(|txn| {
+        db.transaction::<_, BillWithChargesAndReading, DbErr>(|txn| {
             let input = input.clone();
             Box::pin(async move {
                 let bill_model = build_bill_active_model(&input).insert(txn).await?;
                 insert_charges(txn, bill_model.id, &input.additional_charges).await?;
-                Ok(bill_model)
+
+                let charges = additional_charge_repo::get_all_by_bill_id(txn, bill_model.id).await?;
+                let reading =
+                    electricity_reading_repo::get_by_id(txn, bill_model.reading_id).await?;
+
+                println!(
+                    "✅ Created bill id={} with {} charges",
+                    bill_model.id,
+                    charges.len()
+                );
+
+                Ok(BillWithChargesAndReading {
+                    bill: bill_model,
+                    additional_charges: charges,
+                    reading,
+                })
             })
-        }).await
+        })
+        .await,
     )
 }
 
-pub async fn update_bill(db: &DatabaseConnection, id: i32, input: BillInput) -> Result<bill::Model, DbErr> {
+// UPDATE a bill
+pub async fn update_bill(
+    db: &DatabaseConnection,
+    id: i32,
+    input: BillInput,
+) -> Result<BillWithChargesAndReading, DbErr> {
     map_txn_err(
-        db.transaction::<_, bill::Model, DbErr>(|txn| {
+        db.transaction::<_, BillWithChargesAndReading, DbErr>(|txn| {
             let input = input.clone();
             Box::pin(async move {
                 let mut bill_am = build_bill_active_model(&input);
@@ -136,8 +209,24 @@ pub async fn update_bill(db: &DatabaseConnection, id: i32, input: BillInput) -> 
                 delete_charges(txn, updated_bill.id).await?;
                 insert_charges(txn, updated_bill.id, &input.additional_charges).await?;
 
-                Ok(updated_bill)
+                let charges =
+                    additional_charge_repo::get_all_by_bill_id(txn, updated_bill.id).await?;
+                let reading =
+                    electricity_reading_repo::get_by_id(txn, updated_bill.reading_id).await?;
+
+                println!(
+                    "✅ Updated bill id={} with {} charges",
+                    updated_bill.id,
+                    charges.len()
+                );
+
+                Ok(BillWithChargesAndReading {
+                    bill: updated_bill,
+                    additional_charges: charges,
+                    reading,
+                })
             })
-        }).await
+        })
+        .await,
     )
 }

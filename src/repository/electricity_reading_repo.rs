@@ -1,7 +1,7 @@
 use crate::entities::electricity_reading;
 use crate::services::electricity_reading_service;
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, QueryOrder, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, QueryOrder, Set, TransactionTrait};
 
 /// GET all readings
 pub async fn get_all(db: &DatabaseConnection) -> Result<Vec<electricity_reading::Model>, DbErr> {
@@ -19,11 +19,12 @@ pub async fn get_all(db: &DatabaseConnection) -> Result<Vec<electricity_reading:
 }
 
 /// GET reading by ID
-pub async fn get_by_id(
-    db: &DatabaseConnection,
+pub async fn get_by_id<C>(
+    conn: &C,
     id: i32,
-) -> Result<Option<electricity_reading::Model>, DbErr> {
-    let result = electricity_reading::Entity::find_by_id(id).one(db).await;
+) -> Result<Option<electricity_reading::Model>, DbErr> where C: ConnectionTrait + TransactionTrait,
+{
+    let result = electricity_reading::Entity::find_by_id(id).one(conn).await;
 
     match &result {
         Ok(Some(r)) => println!("✅ get_by_id: found reading id={}", r.id),

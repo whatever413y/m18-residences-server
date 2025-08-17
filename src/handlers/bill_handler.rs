@@ -1,7 +1,6 @@
 use crate::repository::bill_repo;
 use crate::services::bill_service::{
-    self, AdditionalChargeInput, BillInput, BillWithCharges, BillWithChargesAndReading,
-    create_bill, update_bill,
+    self, AdditionalChargeInput, BillInput, BillWithChargesAndReading
 };
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use sea_orm::DatabaseConnection;
@@ -21,22 +20,31 @@ pub struct BillPayload {
 /// GET /bills
 pub async fn get_bills(
     Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<Vec<BillWithCharges>>, StatusCode> {
-    let items = bill_repo::get_all(&db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(items))
+) -> Result<Json<Vec<BillWithChargesAndReading>>, StatusCode> {
+    match bill_service::get_all_bills_with_details(&db).await {
+        Ok(items) => Ok(Json(items)),
+        Err(err) => {
+            eprintln!("[get_bills] Failed to fetch all bills: {:?}", err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
-/// GET /bills/:id
-pub async fn get_bill(
-    Path(id): Path<i32>,
+/// GET /bills/:tenant_id/bill
+pub async fn get_bill_by_tenant(
+    Path(tenant_id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<BillWithCharges>, StatusCode> {
-    match bill_repo::get_by_id(&db, id).await {
-        Ok(Some(bill)) => Ok(Json(bill)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+) -> Result<Json<BillWithChargesAndReading>, StatusCode> {
+    match bill_service::get_tenant_bill_with_details(&db, tenant_id).await {
+        Ok(Some(bill_model)) => Ok(Json(bill_model)),
+        Ok(None) => {
+            eprintln!("[get_bill_by_tenant] No bill found for tenant_id={}", tenant_id);
+            Err(StatusCode::NOT_FOUND)
+        }
+        Err(err) => {
+            eprintln!("[get_bill_by_tenant] Failed to fetch bill for tenant_id={} : {:?}", tenant_id, err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -45,17 +53,20 @@ pub async fn get_bills_by_tenant(
     Path(tenant_id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<Vec<BillWithChargesAndReading>>, StatusCode> {
-    let items = bill_service::get_bills_for_tenant(&db, tenant_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(items))
+    match bill_service::get_all_bills_for_tenant(&db, tenant_id).await {
+        Ok(items) => Ok(Json(items)),
+        Err(err) => {
+            eprintln!("[get_bills_by_tenant] Failed to fetch bills for tenant_id={} : {:?}", tenant_id, err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 // Create bill handler
 pub async fn create_bill_handler(
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<BillPayload>,
-) -> Result<Json<BillWithCharges>, StatusCode> {
+) -> Result<Json<BillWithChargesAndReading>, StatusCode> {
     let input = BillInput {
         tenant_id: payload.tenant_id,
         reading_id: payload.reading_id,
@@ -65,29 +76,24 @@ pub async fn create_bill_handler(
         receipt_url: None,
     };
 
-    let bill_model = create_bill(&db, input).await.map_err(|err| {
-        eprintln!("Failed to create bill: {:?}", err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Fetch the bill with charges
-    let bill_with_charges = crate::repository::bill_repo::get_by_id(&db, bill_model.id)
-        .await
-        .map_err(|err| {
-            eprintln!("Failed to fetch created bill: {:?}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(bill_with_charges))
+    match crate::services::bill_service::create_bill(&db, input).await {
+        Ok(bill_with_details) => Ok(Json(bill_with_details)),
+        Err(err) => {
+            eprintln!(
+                "[create_bill_handler] Failed to create bill for tenant_id={} reading_id={} : {:?}",
+                payload.tenant_id, payload.reading_id, err
+            );
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 // Update bill handler
 pub async fn update_bill_handler(
     Extension(db): Extension<DatabaseConnection>,
-    axum::extract::Path(id): axum::extract::Path<i32>,
+    Path(id): Path<i32>,
     Json(payload): Json<BillPayload>,
-) -> Result<Json<BillWithCharges>, StatusCode> {
+) -> Result<Json<BillWithChargesAndReading>, StatusCode> {
     let input = BillInput {
         tenant_id: payload.tenant_id,
         reading_id: payload.reading_id,
@@ -97,20 +103,16 @@ pub async fn update_bill_handler(
         receipt_url: None,
     };
 
-    let updated_bill = update_bill(&db, id, input).await.map_err(|err| {
-        eprintln!("Failed to update bill: {:?}", err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let bill_with_charges = crate::repository::bill_repo::get_by_id(&db, updated_bill.id)
-        .await
-        .map_err(|err| {
-            eprintln!("Failed to fetch updated bill: {:?}", err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(bill_with_charges))
+    match crate::services::bill_service::update_bill(&db, id, input).await {
+        Ok(updated_bill_with_details) => Ok(Json(updated_bill_with_details)),
+        Err(err) => {
+            eprintln!(
+                "[update_bill_handler] Failed to update bill id={} for tenant_id={} : {:?}",
+                id, payload.tenant_id, err
+            );
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// DELETE /bills/:id
@@ -120,7 +122,14 @@ pub async fn delete_bill(
 ) -> Result<StatusCode, StatusCode> {
     match bill_repo::delete(&db, id).await {
         Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Ok(None) => {
+            eprintln!("[delete_bill] No bill found with id={}", id);
+            Err(StatusCode::NOT_FOUND)
+        }
+        Err(err) => {
+            eprintln!("[delete_bill] Failed to delete bill id={} : {:?}", id, err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
+

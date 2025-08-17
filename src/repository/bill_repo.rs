@@ -1,6 +1,6 @@
 use crate::entities::{bill, additional_charge, electricity_reading};
-use crate::services::bill_service::{build_additional_charge_active_models, build_bill_active_model, BillInput, BillWithCharges, BillWithChargesAndReading};
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait};
+use crate::services::bill_service::{BillWithCharges,};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder};
 
 /// GET all bills with their additional charges
 pub async fn get_all(db: &DatabaseConnection)
@@ -73,56 +73,6 @@ pub async fn get_bills_with_readings_and_charges_by_tenant(
 
     Ok(result)
 }
-
-
-// /// CREATE a bill with charges in a transaction
-// pub async fn create(
-//     db: &DatabaseConnection,
-//     input: BillInput
-// ) -> Result<bill::Model, DbErr> {
-//     db.transaction::<_, bill::Model, DbErr>(|txn| async move {
-//         let bill_am = build_bill_active_model(&input);
-//         let bill_model = bill_am.insert(txn).await?;
-
-//         let charges = build_additional_charge_active_models(bill_model.id, &input.additional_charges);
-//         for ac in charges {
-//             ac.insert(txn).await?;
-//         }
-
-//         println!("✅ create: created bill id={}", bill_model.id);
-//         Ok(bill_model)
-//     }).await
-// }
-
-// /// UPDATE a bill and its charges in a transaction
-// pub async fn update(
-//     db: &DatabaseConnection,
-//     id: i32,
-//     input: BillInput
-// ) -> Result<bill::Model, DbErr> {
-//     db.transaction::<_, bill::Model, DbErr>(|txn| async move {
-//         let mut bill_am = build_bill_active_model(&input);
-//         bill_am.id = Set(id);
-//         bill_am.updated_at = Set(chrono::Utc::now().naive_utc());
-
-//         let updated_bill = bill_am.update(txn).await?;
-
-//         // Remove old additional charges
-//         additional_charge::Entity::delete_many()
-//             .filter(additional_charge::Column::BillId.eq(id))
-//             .exec(txn)
-//             .await?;
-
-//         // Insert new charges
-//         let charges = build_additional_charge_active_models(id, &input.additional_charges);
-//         for ac in charges {
-//             ac.insert(txn).await?;
-//         }
-
-//         println!("✅ update: updated bill id={}", updated_bill.id);
-//         Ok(updated_bill)
-//     }).await
-// }
 
 /// DELETE a bill
 pub async fn delete(

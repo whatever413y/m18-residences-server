@@ -6,7 +6,7 @@ pub fn bill_routes() -> Router {
         .route("/", get(bill_handler::get_bills))
         .route("/tenant/:id", get(bill_handler::get_bills_by_tenant))
         .route("/:id", get(bill_handler::get_bill))
-        // .route("/", post(bill_handler::create_bill))
-        // .route("/:id", put(bill_handler::update_bill))
+        .route("/", post(bill_handler::create_bill_handler))
+        .route("/:id", put(bill_handler::update_bill_handler))
         .route("/:id", delete(bill_handler::delete_bill))
 }

@@ -2,7 +2,7 @@ use sea_orm::entity::prelude::*;
 use serde::Serialize;
 use crate::entities::bill;
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "Additional_Charges")]
 pub struct Model {
     #[sea_orm(primary_key)]
@@ -14,7 +14,7 @@ pub struct Model {
     pub updated_at: chrono::NaiveDateTime,
 }
 
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation, Serialize)]
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(belongs_to = "bill::Entity", from = "Column::BillId", to = "bill::Column::Id")]
     Bill,

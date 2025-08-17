@@ -34,6 +34,7 @@ async fn main() {
         .nest("/api/rooms", room_routes())
         .nest("/api/tenants", tenant_routes())
         .nest("/api/electricity-readings", routes::electricity_reading_routes::electricity_reading_routes())
+        .nest("/api/bills", routes::bill_routes::bill_routes())
         .route("/", get(|| async { "Rental Management API is up" }))
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         .layer(cors_layer())

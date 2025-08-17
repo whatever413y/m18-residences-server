@@ -15,8 +15,8 @@ pub struct Model {
     pub total_amount: i32,
     pub receipt_url: Option<String>,
     pub paid: bool,
-    pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation, Serialize)]

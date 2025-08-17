@@ -7,8 +7,10 @@ mod repository;
 use axum::{response::Json, routing::get, Extension, Router};
 use std::{net::SocketAddr, time::Duration};
 use middleware::{cors::cors_layer, db};
-use routes::room_routes::room_routes;
 use tokio::signal;
+
+use crate::routes::room_routes::room_routes;
+use crate::routes::tenant_routes::tenant_routes;
 
 #[tokio::main]
 async fn main() {
@@ -29,6 +31,7 @@ async fn main() {
     // Build app
     let app = Router::new()
         .nest("/api/rooms", room_routes())
+        .nest("/api/tenants", tenant_routes())
         .route("/", get(|| async { "Rental Management API is up" }))
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         .layer(cors_layer())

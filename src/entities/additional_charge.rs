@@ -10,8 +10,8 @@ pub struct Model {
     pub bill_id: i32,
     pub amount: i32,
     pub description: String,
-    pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation, Serialize)]

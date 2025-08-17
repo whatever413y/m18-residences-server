@@ -12,8 +12,8 @@ pub struct Model {
     pub prev_reading: i32,
     pub curr_reading: i32,
     pub consumption: i32,
-    pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

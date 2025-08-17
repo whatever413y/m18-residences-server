@@ -10,9 +10,9 @@ pub struct Model {
     pub room_id: i32,
     pub name: String,
     pub is_active: bool,
-    pub join_date: DateTimeUtc,
-    pub created_at: DateTimeUtc,
-    pub updated_at: DateTimeUtc,
+    pub join_date: chrono::NaiveDateTime,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

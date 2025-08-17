@@ -23,7 +23,7 @@ model Tenant {
   id        Int                  @id @default(autoincrement())
   roomId    Int                  @map("room_id")
   name      String               @unique
-  is_active Boolean              @default(true)
+  isActive  Boolean              @default(true) @map("is_active")
   joinDate  DateTime             @default(now()) @map("join_date")
   createdAt DateTime             @default(now()) @map("created_at")
   updatedAt DateTime             @updatedAt @map("updated_at")

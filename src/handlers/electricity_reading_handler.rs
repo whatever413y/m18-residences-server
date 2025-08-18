@@ -46,17 +46,13 @@ pub async fn create_reading(
         room_id: Set(payload.room_id),
         prev_reading: Set(payload.prev_reading),
         curr_reading: Set(payload.curr_reading),
-        consumption: Set(electricity_reading_service::calculate_consumption(
-            Set(payload.prev_reading),
-            Set(payload.curr_reading),
-        )),
         ..Default::default()
     };
 
-    let reading = electricity_reading_repo::create(&db, active_model)
+    electricity_reading_service::create_reading(&db, active_model)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(reading))
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// PUT /readings/:id
@@ -71,17 +67,13 @@ pub async fn update_reading(
         room_id: Set(payload.room_id),
         prev_reading: Set(payload.prev_reading),
         curr_reading: Set(payload.curr_reading),
-        consumption: Set(electricity_reading_service::calculate_consumption(
-            Set(payload.prev_reading),
-            Set(payload.curr_reading),
-        )),
         ..Default::default()
     };
 
-    let reading = electricity_reading_repo::update(&db, id, active_model)
+    electricity_reading_service::update_reading(&db, id, active_model)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(reading))
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// DELETE /readings/:id
@@ -89,7 +81,7 @@ pub async fn delete_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<StatusCode, StatusCode> {
-    match electricity_reading_repo::delete(&db, id).await {
+    match electricity_reading_service::delete_reading(&db, id).await {
         Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),

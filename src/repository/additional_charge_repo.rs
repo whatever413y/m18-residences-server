@@ -40,10 +40,17 @@ pub async fn delete(db: &DatabaseConnection, id: i32) -> Result<(), DbErr> {
         .map(|_| ())
 }
 
-pub async fn delete_many_by_bill_id(db: &DatabaseTransaction, bill_id: i32) -> Result<(), DbErr> {
-    additional_charge::Entity::delete_many()
+pub async fn delete_many_by_bill_id<C>(
+    conn: &C,
+    bill_id: i32,
+) -> Result<u64, DbErr>
+where
+    C: ConnectionTrait,
+{
+    let res = additional_charge::Entity::delete_many()
         .filter(additional_charge::Column::BillId.eq(bill_id))
-        .exec(db)
-        .await
-        .map(|_| ())
+        .exec(conn)
+        .await?;
+
+    Ok(res.rows_affected)
 }

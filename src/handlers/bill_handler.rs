@@ -1,4 +1,3 @@
-use crate::repository::bill_repo;
 use crate::services::bill_service::{
     self, AdditionalChargeInput, BillInput, BillWithChargesAndReading
 };
@@ -76,7 +75,7 @@ pub async fn create_bill_handler(
         receipt_url: None,
     };
 
-    match crate::services::bill_service::create_bill(&db, input).await {
+    match bill_service::create_bill(&db, input).await {
         Ok(bill_with_details) => Ok(Json(bill_with_details)),
         Err(err) => {
             eprintln!(
@@ -103,7 +102,7 @@ pub async fn update_bill_handler(
         receipt_url: None,
     };
 
-    match crate::services::bill_service::update_bill(&db, id, input).await {
+    match bill_service::update_bill(&db, id, input).await {
         Ok(updated_bill_with_details) => Ok(Json(updated_bill_with_details)),
         Err(err) => {
             eprintln!(
@@ -120,7 +119,7 @@ pub async fn delete_bill(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<StatusCode, StatusCode> {
-    match bill_repo::delete(&db, id).await {
+    match bill_service::delete_bill_with_charges(&db, id).await {
         Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
         Ok(None) => {
             eprintln!("[delete_bill] No bill found with id={}", id);

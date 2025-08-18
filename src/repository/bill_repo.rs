@@ -1,5 +1,7 @@
 use crate::entities::bill;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder
+};
 
 /// GET all bills
 pub async fn get_all(db: &DatabaseConnection) -> Result<Vec<bill::Model>, DbErr> {
@@ -28,7 +30,10 @@ pub async fn get_latest_by_tenant_id(
 }
 
 /// GET bills for a tenant (basic)
-pub async fn get_all_by_tenant_id(db: &DatabaseConnection, tenant_id: i32) -> Result<Vec<bill::Model>, DbErr> {
+pub async fn get_all_by_tenant_id(
+    db: &DatabaseConnection,
+    tenant_id: i32,
+) -> Result<Vec<bill::Model>, DbErr> {
     bill::Entity::find()
         .filter(bill::Column::TenantId.eq(tenant_id))
         .order_by_desc(bill::Column::CreatedAt)
@@ -37,11 +42,16 @@ pub async fn get_all_by_tenant_id(db: &DatabaseConnection, tenant_id: i32) -> Re
 }
 
 /// DELETE a bill by ID
-pub async fn delete(db: &DatabaseConnection, id: i32) -> Result<Option<bill::Model>, DbErr> {
-    if let Some(model) = bill::Entity::find_by_id(id).one(db).await? {
+pub async fn delete<C>(conn: &C, id: i32) -> Result<Option<bill::Model>, DbErr>
+where
+    C: ConnectionTrait,
+{
+    if let Some(model) = bill::Entity::find_by_id(id).one(conn).await? {
         let am: bill::ActiveModel = model.clone().into();
-        am.delete(db).await.map(|_| Some(model))
+        am.delete(conn).await?;
+        Ok(Some(model))
     } else {
         Ok(None)
     }
 }
+

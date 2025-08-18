@@ -83,10 +83,6 @@ async fn insert_charges(
     Ok(())
 }
 
-async fn delete_charges(txn: &DatabaseTransaction, bill_id: i32) -> Result<(), DbErr> {
-    additional_charge_repo::delete_many_by_bill_id(txn, bill_id).await
-}
-
 fn map_txn_err<T>(res: Result<T, TransactionError<DbErr>>) -> Result<T, DbErr> {
     res.map_err(|e| match e {
         TransactionError::Connection(err) => err,
@@ -206,7 +202,7 @@ pub async fn update_bill(
                 bill_am.id = Set(id);
                 let updated_bill = bill_am.update(txn).await?;
 
-                delete_charges(txn, updated_bill.id).await?;
+                additional_charge_repo::delete_many_by_bill_id(txn, updated_bill.id).await?;
                 insert_charges(txn, updated_bill.id, &input.additional_charges).await?;
 
                 let charges =
@@ -225,6 +221,32 @@ pub async fn update_bill(
                     additional_charges: charges,
                     reading,
                 })
+            })
+        })
+        .await,
+    )
+}
+
+// Delete bill and additional charges
+pub async fn delete_bill_with_charges(
+    db: &DatabaseConnection,
+    bill_id: i32,
+) -> Result<Option<bill::Model>, DbErr> {
+    map_txn_err(
+        db.transaction::<_, Option<bill::Model>, DbErr>(|txn| {
+            Box::pin(async move {
+                let deleted_charges =
+                    additional_charge_repo::delete_many_by_bill_id(txn, bill_id).await?;
+                let deleted_bill = bill_repo::delete(txn, bill_id).await?;
+
+                if let Some(bill) = &deleted_bill {
+                    println!(
+                        "✅ Deleted bill id={} with {} charges",
+                        bill.id, deleted_charges
+                    );
+                }
+
+                Ok(deleted_bill)
             })
         })
         .await,

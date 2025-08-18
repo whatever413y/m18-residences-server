@@ -13,6 +13,8 @@ use tokio::signal;
 use crate::routes::room_routes::room_routes;
 use crate::routes::tenant_routes::tenant_routes;
 
+use services::r2_service::init_r2;
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
@@ -29,6 +31,14 @@ async fn main() {
         }
     };
 
+    // Initialize R2 client
+    let r2 = match init_r2().await {
+        r => {
+            println!("✅ R2 client initialized");
+            r
+        }
+    };
+
     // Build app
     let app = Router::new()
         .nest("/api/rooms", room_routes())
@@ -38,7 +48,8 @@ async fn main() {
         .route("/", get(|| async { "Rental Management API is up" }))
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         .layer(cors_layer())
-        .layer(Extension(db));
+        .layer(Extension(db))
+        .layer(Extension(r2));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], std::env::var("PORT")
         .unwrap_or("3001".to_string())
@@ -53,11 +64,10 @@ async fn main() {
     // Spawn a task to listen for Ctrl+C
     let graceful = handle.clone();
     tokio::spawn(async move {
-    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
-    println!("⚠️ Ctrl+C received, shutting down...");
-    graceful.graceful_shutdown(Some(Duration::from_secs(5)));
-});
-
+        signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+        println!("⚠️ Ctrl+C received, shutting down...");
+        graceful.graceful_shutdown(Some(Duration::from_secs(5)));
+    });
 
     // Start server with the handle
     if let Err(err) = axum_server::bind(addr)

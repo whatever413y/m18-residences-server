@@ -1,6 +1,6 @@
-use crate::services::bill_service::{
+use crate::services::{bill_service::{
     self, AdditionalChargeInput, BillInput, BillWithChargesAndReading
-};
+}, r2_service::R2Config};
 use axum::{Extension, Json, extract::Path, http::StatusCode};
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
@@ -12,8 +12,8 @@ pub struct BillPayload {
     pub room_charges: i32,
     pub electric_charges: i32,
     pub additional_charges: Option<Vec<AdditionalChargeInput>>,
-    // pub receipt_file: Option<Vec<u8>>,
-    // pub receipt_mime: Option<String>,
+    pub receipt_url: Option<String>,
+    pub receipt_file: Option<Vec<u8>>,
 }
 
 /// GET /bills
@@ -90,20 +90,44 @@ pub async fn create_bill_handler(
 // Update bill handler
 pub async fn update_bill_handler(
     Extension(db): Extension<DatabaseConnection>,
+    Extension(r2): Extension<R2Config>,
     Path(id): Path<i32>,
     Json(payload): Json<BillPayload>,
 ) -> Result<Json<BillWithChargesAndReading>, StatusCode> {
+    let mut receipt_url: Option<String> = payload.receipt_url.clone();
+
+    if let Some(file_bytes) = payload.receipt_file.clone() {
+        let tenant_name = match crate::services::tenant_service::get_tenant_by_id(&db, payload.tenant_id).await {
+            Ok(Some(t)) => t.name,
+            _ => "unknown".to_string(),
+        };
+
+        let key = format!("receipts/{}/{}-r{}", tenant_name, chrono::Utc::now().timestamp(), payload.reading_id);
+        match crate::services::r2_service::upload_file(&r2, &key, file_bytes, "application/octet-stream").await {
+            Ok(full_url) => {
+                if let Some(filename) = full_url.split('/').last() {
+                    receipt_url = Some(filename.to_string());
+                }
+            }
+            Err(err) => {
+                eprintln!("[update_bill_handler] Failed to upload receipt: {:?}", err);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    // Build input for service
     let input = BillInput {
         tenant_id: payload.tenant_id,
         reading_id: payload.reading_id,
         room_charges: payload.room_charges,
         electric_charges: payload.electric_charges,
         additional_charges: payload.additional_charges.unwrap_or_default(),
-        receipt_url: None,
+        receipt_url,
     };
 
     match bill_service::update_bill(&db, id, input).await {
-        Ok(updated_bill_with_details) => Ok(Json(updated_bill_with_details)),
+        Ok(updated_bill) => Ok(Json(updated_bill)),
         Err(err) => {
             eprintln!(
                 "[update_bill_handler] Failed to update bill id={} for tenant_id={} : {:?}",
@@ -113,6 +137,7 @@ pub async fn update_bill_handler(
         }
     }
 }
+
 
 /// DELETE /bills/:id
 pub async fn delete_bill(

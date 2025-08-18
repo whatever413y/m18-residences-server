@@ -1,10 +1,10 @@
 use axum::{
     extract::{Extension, Json},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
-use crate::services::auth_service::{admin_login, tenant_login};
+use crate::services::auth_service::{admin_login, tenant_login, validate_token};
 
 #[derive(Deserialize)]
 pub struct AdminLoginInput {
@@ -58,5 +58,14 @@ pub async fn tenant_login_handler(
             Json(serde_json::json!({ "error": err })),
         )
             .into_response(),
+    }
+}
+
+pub async fn validate_token_handler(headers: HeaderMap) -> impl IntoResponse {
+    match validate_token(&headers) {
+        Ok(claims) => {
+            (StatusCode::OK, Json(serde_json::json!({ "user": claims })))
+        }
+        Err((status, msg)) => (status, Json(serde_json::json!({ "error": msg }))),
     }
 }

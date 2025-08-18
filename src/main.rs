@@ -29,7 +29,6 @@ async fn main() {
 
     // Initialize R2 client
     let r2 = init_r2().await;
-    println!("✅ R2 client initialized");
 
     // Helper to apply JWT auth to a router
     let protected = |router: Router| router.route_layer(from_fn(middleware::jwt::require_auth));

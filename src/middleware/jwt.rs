@@ -1,5 +1,9 @@
 use axum::{
-    body::Body, http::{Request, StatusCode}, middleware::Next, response::{IntoResponse, Response}, Json
+    body::Body,
+    http::{Request, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+    Json,
 };
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
@@ -16,9 +20,12 @@ fn jwt_secret() -> String {
     std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".into())
 }
 
-/// Middleware that ensures the request has a valid token
-pub async fn require_auth(mut req: Request<Body>, next: Next) -> Response
-{
+/// Middleware that ensures the request has a valid token,
+/// and optionally requires admin privileges.
+pub async fn require_auth(
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
     let claims = req
         .headers()
         .get("authorization")
@@ -37,32 +44,18 @@ pub async fn require_auth(mut req: Request<Body>, next: Next) -> Response
 
     match claims {
         Some(claims) => {
-            req.extensions_mut().insert(claims);
+            req.extensions_mut().insert(claims.clone());
+
+            if req.uri().path().starts_with("/api/admin") && claims.role.as_deref() != Some("admin") {
+                let body = Json(serde_json::json!({ "error": "Admin access required" }));
+                return (StatusCode::FORBIDDEN, body).into_response();
+            }
+
             next.run(req).await
         }
         None => {
             let body = Json(serde_json::json!({ "error": "Authentication required" }));
             (StatusCode::UNAUTHORIZED, body).into_response()
-        }
-    }
-}
-
-/// Middleware that ensures the request has admin claims
-pub async fn require_admin(
-    req: Request<Body>,
-    next: Next,
-) -> Response {
-    // Extract Claims from request extensions
-    let claims = req
-        .extensions()
-        .get::<Claims>()
-        .cloned();
-
-    match claims {
-        Some(claims) if claims.role.as_deref() == Some("admin") => next.run(req).await,
-        _ => {
-            let body = Json(serde_json::json!({ "error": "Admin access required" }));
-            (axum::http::StatusCode::FORBIDDEN, body).into_response()
         }
     }
 }

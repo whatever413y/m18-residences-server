@@ -9,6 +9,7 @@ use crate::handlers::auth_handler::{
 
 pub fn auth_routes() -> Router {
     Router::new()
+        .route("/validate-token", post(crate::handlers::auth_handler::validate_token_handler))
         .route("/admin-login", post(admin_login_handler))
         .route("/login", post(
             tenant_login_handler

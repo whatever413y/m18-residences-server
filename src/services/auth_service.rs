@@ -1,4 +1,5 @@
-use jsonwebtoken::{encode, EncodingKey, Header};
+use axum::http::{HeaderMap, StatusCode};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use sea_orm::DatabaseConnection;
 use serde::{Serialize, Deserialize};
 use chrono::Utc;
@@ -68,4 +69,22 @@ pub async fn tenant_login(
     .map_err(|e| e.to_string())?;
 
     Ok((token, tenant))
+}
+
+// Validate JWT token
+pub fn validate_token(headers: &HeaderMap) -> Result<Claims, (StatusCode, &'static str)> {
+    let token = headers
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .filter(|h| h.starts_with("Bearer "))
+        .map(|h| h.trim_start_matches("Bearer "))
+        .ok_or((StatusCode::UNAUTHORIZED, "Missing token"))?;
+
+    decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(std::env::var("JWT_SECRET").unwrap_or("secret".into()).as_bytes()),
+        &Validation::new(Algorithm::HS256),
+    )
+    .map(|data| data.claims)
+    .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token"))
 }

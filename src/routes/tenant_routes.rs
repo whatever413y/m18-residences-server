@@ -1,13 +1,17 @@
+use axum::middleware::from_fn;
 use axum::Router;
 use axum::routing::{get, post, put, delete};
-use crate::handlers::tenant_handler;
+use crate::handlers::tenant_handler::{
+    get_tenants, get_tenant, get_tenant_by_name, create_tenant, update_tenant, delete_tenant
+};
+use crate::middleware::jwt::require_admin;
 
 pub fn tenant_routes() -> Router {
     Router::new()
-        .route("/", get(tenant_handler::get_tenants))
-        .route("/:id", get(tenant_handler::get_tenant))
-        .route("/tenant/:name", get(tenant_handler::get_tenant_by_name))
-        .route("/", post(tenant_handler::create_tenant))
-        .route("/:id", put(tenant_handler::update_tenant))
-        .route("/:id", delete(tenant_handler::delete_tenant))
+        .route("/", get(get_tenants))
+        .route("/:id", get(get_tenant))
+        .route("/tenant/:name", get(get_tenant_by_name))
+        .route("/", post(create_tenant)).route_layer(from_fn(require_admin))
+        .route("/:id", put(update_tenant)).route_layer(from_fn(require_admin))
+        .route("/:id", delete(delete_tenant)).route_layer(from_fn(require_admin))
 }

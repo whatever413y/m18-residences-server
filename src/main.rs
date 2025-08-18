@@ -1,18 +1,14 @@
+mod entities;
 mod handlers;
 mod middleware;
-mod routes;
-mod entities;
 mod repository;
+mod routes;
 mod services;
 
-use axum::{response::Json, routing::get, Extension, Router};
-use std::{net::SocketAddr, time::Duration};
+use axum::{Extension, Router, response::Json, routing::get, middleware::from_fn};
 use middleware::{cors::cors_layer, db};
+use std::{net::SocketAddr, time::Duration};
 use tokio::signal;
-
-use crate::routes::room_routes::room_routes;
-use crate::routes::tenant_routes::tenant_routes;
-
 use services::r2_service::init_r2;
 
 #[tokio::main]
@@ -32,36 +28,43 @@ async fn main() {
     };
 
     // Initialize R2 client
-    let r2 = match init_r2().await {
-        r => {
-            println!("✅ R2 client initialized");
-            r
-        }
-    };
+    let r2 = init_r2().await;
+    println!("✅ R2 client initialized");
+
+    // Helper to apply JWT auth to a router
+    let protected = |router: Router| router.route_layer(from_fn(middleware::jwt::require_auth));
 
     // Build app
     let app = Router::new()
-        .nest("/api/rooms", room_routes())
-        .nest("/api/tenants", tenant_routes())
-        .nest("/api/electricity-readings", routes::electricity_reading_routes::electricity_reading_routes())
-        .nest("/api/bills", routes::bill_routes::bill_routes())
+        // Public routes
+        .nest("/api/auth", routes::auth_routes::auth_routes())
         .route("/", get(|| async { "Rental Management API is up" }))
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
+        
+        // Protected routes
+        .nest("/api/signed-urls", protected(routes::signed_url_routes::signed_url_routes()))
+        .nest("/api/rooms", protected(routes::room_routes::room_routes()))
+        .nest("/api/tenants", protected(routes::tenant_routes::tenant_routes()))
+        .nest(
+            "/api/electricity-readings",
+            protected(routes::electricity_reading_routes::electricity_reading_routes()),
+        )
+        .nest("/api/bills", protected(routes::bill_routes::bill_routes()))
+
+        // Global layers
         .layer(cors_layer())
         .layer(Extension(db))
         .layer(Extension(r2));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], std::env::var("PORT")
-        .unwrap_or("3001".to_string())
-        .parse()
-        .unwrap()));
-
+    // Server address
+    let addr = SocketAddr::from((
+        [0, 0, 0, 0],
+        std::env::var("PORT").unwrap_or("3001".to_string()).parse().unwrap(),
+    ));
     println!("Server running on {}", addr);
 
-    // Create a Handle for graceful shutdown
+    // Create handle for graceful shutdown
     let handle = axum_server::Handle::new();
-
-    // Spawn a task to listen for Ctrl+C
     let graceful = handle.clone();
     tokio::spawn(async move {
         signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
@@ -69,7 +72,7 @@ async fn main() {
         graceful.graceful_shutdown(Some(Duration::from_secs(5)));
     });
 
-    // Start server with the handle
+    // Start server
     if let Err(err) = axum_server::bind(addr)
         .handle(handle)
         .serve(app.into_make_service())

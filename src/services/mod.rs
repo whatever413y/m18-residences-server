@@ -1,3 +1,4 @@
+pub mod auth_service;
 pub mod room_service;
 pub mod tenant_service;
 pub mod electricity_reading_service;

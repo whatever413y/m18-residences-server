@@ -2,7 +2,7 @@ use axum::{extract::Path, Extension, Json, http::StatusCode};
 use sea_orm::ActiveValue::Set;
 use sea_orm::DatabaseConnection;
 use crate::entities::room;
-use crate::repository::room_repo;
+use crate::services::room_service;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -15,7 +15,7 @@ pub struct RoomInput {
 pub async fn get_rooms(
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<Vec<room::Model>>, StatusCode> {
-    let rooms = room_repo::get_all(&db)
+    let rooms = room_service::get_all_rooms(&db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rooms))
@@ -26,8 +26,8 @@ pub async fn get_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<room::Model>, StatusCode> {
-    match room_repo::get_by_id(&db, id).await {
-        Ok(Some(room)) => Ok(Json(room)),
+    match room_service::get_room_by_id(&db, id).await {
+        Ok(Some(r)) => Ok(Json(r)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -44,7 +44,7 @@ pub async fn create_room(
         ..Default::default()
     };
 
-    let room = room_repo::create(&db, active_model)
+    let room = room_service::create_room(&db, active_model)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(room))
@@ -63,7 +63,7 @@ pub async fn update_room(
         ..Default::default()
     };
 
-    let room = room_repo::update(&db, id, active_model)
+    let room = room_service::update_room(&db, id, active_model)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(room))
@@ -74,7 +74,7 @@ pub async fn delete_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<StatusCode, StatusCode> {
-    match room_repo::delete(&db, id).await {
+    match room_service::delete_room(&db, id).await {
         Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),

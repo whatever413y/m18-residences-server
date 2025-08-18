@@ -2,7 +2,7 @@ use axum::{extract::Path, Extension, Json, http::StatusCode};
 use sea_orm::ActiveValue::Set;
 use sea_orm::DatabaseConnection;
 use crate::entities::tenant;
-use crate::repository::tenant_repo;
+use crate::services::tenant_service;
 use chrono::NaiveDateTime;
 use serde::Deserialize;
 
@@ -18,7 +18,7 @@ pub struct TenantInput {
 pub async fn get_tenants(
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<Vec<tenant::Model>>, StatusCode> {
-    let tenants = tenant_repo::get_all(&db)
+    let tenants = tenant_service::get_all_tenants(&db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(tenants))
@@ -29,7 +29,7 @@ pub async fn get_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<tenant::Model>, StatusCode> {
-    match tenant_repo::get_by_id(&db, id).await {
+    match tenant_service::get_tenant_by_id(&db, id).await {
         Ok(Some(t)) => Ok(Json(t)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -41,7 +41,7 @@ pub async fn get_tenant_by_name(
     Path(name): Path<String>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<tenant::Model>, StatusCode> {
-    match tenant_repo::get_by_name(&db, &name).await {
+    match tenant_service::get_tenant_by_name(&db, &name).await {
         Ok(Some(t)) => Ok(Json(t)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -61,7 +61,7 @@ pub async fn create_tenant(
         ..Default::default()
     };
 
-    let tenant = tenant_repo::create(&db, active_model)
+    let tenant = tenant_service::create_tenant(&db, active_model)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(tenant))
@@ -82,7 +82,7 @@ pub async fn update_tenant(
         ..Default::default()
     };
 
-    let tenant = tenant_repo::update(&db, id, active_model)
+    let tenant = tenant_service::update_tenant(&db, id, active_model)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(tenant))
@@ -93,7 +93,7 @@ pub async fn delete_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<StatusCode, StatusCode> {
-    match tenant_repo::delete(&db, id).await {
+    match tenant_service::delete_tenant(&db, id).await {
         Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),

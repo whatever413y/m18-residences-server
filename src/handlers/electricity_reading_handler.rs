@@ -1,7 +1,6 @@
 use axum::{extract::Path, Extension, Json, http::StatusCode};
 use sea_orm::DatabaseConnection;
 use crate::entities::electricity_reading;
-use crate::repository::electricity_reading_repo;
 use crate::services::electricity_reading_service;
 use serde::Deserialize;
 use sea_orm::ActiveValue::Set;
@@ -18,10 +17,10 @@ pub struct ReadingInput {
 pub async fn get_readings(
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<Vec<electricity_reading::Model>>, StatusCode> {
-    let readings = electricity_reading_repo::get_all(&db)
+    electricity_reading_service::get_all_readings(&db)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(readings))
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// GET /readings/:id
@@ -29,7 +28,7 @@ pub async fn get_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<electricity_reading::Model>, StatusCode> {
-    match electricity_reading_repo::get_by_id(&db, id).await {
+    match electricity_reading_service::get_reading_by_id(&db, id).await {
         Ok(Some(r)) => Ok(Json(r)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),

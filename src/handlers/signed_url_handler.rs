@@ -19,7 +19,7 @@ pub async fn get_receipt_signed_url_handler(
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "Failed to generate URL" })),
-        ),
+        )
     }
 }
 

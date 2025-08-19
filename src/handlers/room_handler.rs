@@ -1,8 +1,8 @@
-use axum::{extract::Path, Extension, Json, http::StatusCode};
-use sea_orm::ActiveValue::Set;
-use sea_orm::DatabaseConnection;
 use crate::entities::room;
 use crate::services::room_service;
+use axum::{Extension, Json, extract::Path, http::StatusCode};
+use sea_orm::ActiveValue::Set;
+use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -25,9 +25,9 @@ pub async fn get_rooms(
 pub async fn get_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<room::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<room::Model>), StatusCode> {
     match room_service::get_room_by_id(&db, id).await {
-        Ok(Some(r)) => Ok(Json(r)),
+        Ok(Some(r)) => Ok((StatusCode::OK, Json(r))),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -37,17 +37,17 @@ pub async fn get_room(
 pub async fn create_room(
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<RoomInput>,
-) -> Result<Json<room::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<room::Model>), StatusCode> {
     let active_model = room::ActiveModel {
         name: Set(payload.name),
         rent: Set(payload.rent),
         ..Default::default()
     };
 
-    let room = room_service::create_room(&db, active_model)
+    room_service::create_room(&db, active_model)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(room))
+        .map(|room| (StatusCode::CREATED, Json(room)))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// PUT /rooms/:id
@@ -55,7 +55,7 @@ pub async fn update_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<RoomInput>,
-) -> Result<Json<room::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<room::Model>), StatusCode> {
     let active_model = room::ActiveModel {
         id: Set(id),
         name: Set(payload.name),
@@ -63,10 +63,10 @@ pub async fn update_room(
         ..Default::default()
     };
 
-    let room = room_service::update_room(&db, id, active_model)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(room))
+    match room_service::update_room(&db, id, active_model).await {
+        Ok(updated) => Ok((StatusCode::OK, Json(updated))),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 /// DELETE /rooms/:id

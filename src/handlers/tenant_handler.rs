@@ -1,9 +1,9 @@
-use axum::{extract::Path, Extension, Json, http::StatusCode};
-use sea_orm::ActiveValue::Set;
-use sea_orm::DatabaseConnection;
 use crate::entities::tenant;
 use crate::services::tenant_service;
+use axum::{Extension, Json, extract::Path, http::StatusCode};
 use chrono::NaiveDateTime;
+use sea_orm::ActiveValue::Set;
+use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -28,9 +28,9 @@ pub async fn get_tenants(
 pub async fn get_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<tenant::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
     match tenant_service::get_tenant_by_id(&db, id).await {
-        Ok(Some(t)) => Ok(Json(t)),
+        Ok(Some(t)) => Ok((StatusCode::OK, Json(t))),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -40,9 +40,9 @@ pub async fn get_tenant(
 pub async fn get_tenant_by_name(
     Path(name): Path<String>,
     Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<tenant::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
     match tenant_service::get_tenant_by_name(&db, &name).await {
-        Ok(Some(t)) => Ok(Json(t)),
+        Ok(Some(t)) => Ok((StatusCode::OK, Json(t))),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -52,7 +52,7 @@ pub async fn get_tenant_by_name(
 pub async fn create_tenant(
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<TenantInput>,
-) -> Result<Json<tenant::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
     let active_model = tenant::ActiveModel {
         name: Set(payload.name),
         room_id: Set(payload.room_id),
@@ -61,10 +61,10 @@ pub async fn create_tenant(
         ..Default::default()
     };
 
-    let tenant = tenant_service::create_tenant(&db, active_model)
+    tenant_service::create_tenant(&db, active_model)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(tenant))
+        .map(|tenant| (StatusCode::CREATED, Json(tenant)))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// PUT /tenants/:id
@@ -72,7 +72,7 @@ pub async fn update_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<TenantInput>,
-) -> Result<Json<tenant::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
     let active_model = tenant::ActiveModel {
         id: Set(id),
         name: Set(payload.name),
@@ -82,10 +82,10 @@ pub async fn update_tenant(
         ..Default::default()
     };
 
-    let tenant = tenant_service::update_tenant(&db, id, active_model)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(tenant))
+    match tenant_service::update_tenant(&db, id, active_model).await {
+        Ok(updated) => Ok((StatusCode::OK, Json(updated))),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 /// DELETE /tenants/:id

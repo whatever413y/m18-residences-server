@@ -1,9 +1,9 @@
-use axum::{extract::Path, Extension, Json, http::StatusCode};
-use sea_orm::DatabaseConnection;
 use crate::entities::electricity_reading;
 use crate::services::electricity_reading_service;
-use serde::Deserialize;
+use axum::{Extension, Json, extract::Path, http::StatusCode};
 use sea_orm::ActiveValue::Set;
+use sea_orm::DatabaseConnection;
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct ReadingInput {
@@ -27,9 +27,9 @@ pub async fn get_readings(
 pub async fn get_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<electricity_reading::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<electricity_reading::Model>), StatusCode> {
     match electricity_reading_service::get_reading_by_id(&db, id).await {
-        Ok(Some(r)) => Ok(Json(r)),
+        Ok(Some(r)) => Ok((StatusCode::OK, Json(r))),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -39,7 +39,7 @@ pub async fn get_reading(
 pub async fn create_reading(
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<ReadingInput>,
-) -> Result<Json<electricity_reading::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<electricity_reading::Model>), StatusCode> {
     let active_model = electricity_reading::ActiveModel {
         tenant_id: Set(payload.tenant_id),
         room_id: Set(payload.room_id),
@@ -50,7 +50,7 @@ pub async fn create_reading(
 
     electricity_reading_service::create_reading(&db, active_model)
         .await
-        .map(Json)
+        .map(|reading| (StatusCode::CREATED, Json(reading)))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
@@ -59,7 +59,7 @@ pub async fn update_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<ReadingInput>,
-) -> Result<Json<electricity_reading::Model>, StatusCode> {
+) -> Result<(StatusCode, Json<electricity_reading::Model>), StatusCode> {
     let active_model = electricity_reading::ActiveModel {
         id: Set(id),
         tenant_id: Set(payload.tenant_id),
@@ -69,10 +69,10 @@ pub async fn update_reading(
         ..Default::default()
     };
 
-    electricity_reading_service::update_reading(&db, id, active_model)
-        .await
-        .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    match electricity_reading_service::update_reading(&db, id, active_model).await {
+        Ok(updated) => Ok((StatusCode::OK, Json(updated))),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 /// DELETE /readings/:id

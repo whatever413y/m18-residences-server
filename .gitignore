@@ -11,7 +11,7 @@ Cargo.lock
 .idea/
 .DS_Store
 
-
-# Added by cargo
-
-/target
+# Node
+dist/
+node_modules/
+pnpm-lock.yaml

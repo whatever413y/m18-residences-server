@@ -20,12 +20,11 @@ fn jwt_secret() -> String {
     std::env::var("JWT_SECRET").unwrap_or_else(|_| "secret".into())
 }
 
-/// Middleware that ensures the request has a valid token,
-/// and optionally requires admin privileges.
-pub async fn require_auth(
-    mut req: Request<Body>,
-    next: Next,
-) -> Response {
+fn error_response(status: StatusCode, msg: impl Into<String>) -> Response {
+    (status, Json(serde_json::json!({ "error": msg.into() }))).into_response()
+}
+
+pub async fn require_auth(mut req: Request<Body>, next: Next) -> Response {
     let claims = req
         .headers()
         .get("authorization")
@@ -46,16 +45,14 @@ pub async fn require_auth(
         Some(claims) => {
             req.extensions_mut().insert(claims.clone());
 
-            if req.uri().path().starts_with("/api/admin") && claims.role.as_deref() != Some("admin") {
-                let body = Json(serde_json::json!({ "error": "Admin access required" }));
-                return (StatusCode::FORBIDDEN, body).into_response();
+            if req.uri().path().starts_with("/api/admin")
+                && claims.role.as_deref() != Some("admin")
+            {
+                return error_response(StatusCode::FORBIDDEN, "Admin access required");
             }
 
             next.run(req).await
         }
-        None => {
-            let body = Json(serde_json::json!({ "error": "Authentication required" }));
-            (StatusCode::UNAUTHORIZED, body).into_response()
-        }
+        None => error_response(StatusCode::UNAUTHORIZED, "Authentication required"),
     }
 }

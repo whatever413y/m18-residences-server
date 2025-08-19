@@ -1,4 +1,3 @@
-use axum::http::{HeaderMap, StatusCode};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use sea_orm::DatabaseConnection;
 use serde::{Serialize, Deserialize};
@@ -19,13 +18,22 @@ pub struct Claims {
     pub exp: usize,
 }
 
+#[derive(Debug)]
+pub enum AuthError {
+    InvalidCredentials,
+    TenantNotFound,
+    TokenMissing,
+    TokenInvalid,
+    Other(String),
+}
+
 /// Admin login
-pub async fn admin_login(username: &str, password: &str) -> Result<String, String> {
+pub async fn admin_login(username: &str, password: &str) -> Result<String, AuthError> {
     let admin_username = std::env::var("ADMIN_USERNAME").unwrap_or_default();
     let admin_password = std::env::var("ADMIN_PASSWORD").unwrap_or_default();
 
     if username != admin_username || password != admin_password {
-        return Err("Invalid admin credentials".into());
+        return Err(AuthError::InvalidCredentials);
     }
 
     let claims = Claims {
@@ -40,19 +48,19 @@ pub async fn admin_login(username: &str, password: &str) -> Result<String, Strin
         &claims,
         &EncodingKey::from_secret(jwt_secret().as_bytes()),
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| AuthError::Other(e.to_string()))
 }
 
 /// Tenant login
 pub async fn tenant_login(
     db: &DatabaseConnection,
     name: &str,
-) -> Result<(String, Tenant), String> {
+) -> Result<(String, Tenant), AuthError> {
     let tenant_opt = tenant_service::get_tenant_by_name(db, name)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| AuthError::Other(e.to_string()))?;
 
-    let tenant = tenant_opt.ok_or_else(|| "Tenant not found".to_string())?;
+    let tenant = tenant_opt.ok_or(AuthError::TenantNotFound)?;
 
     let claims = Claims {
         id: Some(tenant.id),
@@ -66,25 +74,22 @@ pub async fn tenant_login(
         &claims,
         &EncodingKey::from_secret(jwt_secret().as_bytes()),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AuthError::Other(e.to_string()))?;
 
     Ok((token, tenant))
 }
 
-// Validate JWT token
-pub fn validate_token(headers: &HeaderMap) -> Result<Claims, (StatusCode, &'static str)> {
-    let token = headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .filter(|h| h.starts_with("Bearer "))
-        .map(|h| h.trim_start_matches("Bearer "))
-        .ok_or((StatusCode::UNAUTHORIZED, "Missing token"))?;
+/// Validate JWT token 
+pub fn validate_token(auth_header: Option<&str>) -> Result<Claims, AuthError> {
+    let token = auth_header
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .ok_or(AuthError::TokenMissing)?;
 
     decode::<Claims>(
         token,
-        &DecodingKey::from_secret(std::env::var("JWT_SECRET").unwrap_or("secret".into()).as_bytes()),
+        &DecodingKey::from_secret(jwt_secret().as_bytes()),
         &Validation::new(Algorithm::HS256),
     )
     .map(|data| data.claims)
-    .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token"))
+    .map_err(|_| AuthError::TokenInvalid)
 }

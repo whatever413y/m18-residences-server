@@ -1,9 +1,17 @@
-node_modules
-dist
+# ---- Rust ----
+/target/      
+Cargo.lock      
+**/*.rs.bk          
+
+# ---- Environment & Config ----
 .env
-package-lock.json
+
+# ---- IDEs & Editors ----
+.vscode/
+.idea/
+.DS_Store
+
+# Node
+dist/
+node_modules/
 pnpm-lock.yaml
-.vscode
-/src/generated/prisma
-target
-Cargo.lock

@@ -8,7 +8,7 @@ class TenantRepository extends BaseRepository<Tenant> {
   async getAll(): Promise<Tenant[]> {
     return prisma.tenant.findMany({
       orderBy: {
-        joinDate: "desc",
+        join_date: "desc",
       },
     });
   }
@@ -27,8 +27,8 @@ class TenantRepository extends BaseRepository<Tenant> {
   return prisma.tenant.create({
     data: {
       name: data.name,
-      roomId: data.roomId,
-      joinDate: new Date(data.joinDate),
+      room_id: data.room_id,
+      join_date: new Date(data.join_date),
     },
   });
 }
@@ -38,9 +38,9 @@ async update(id: number, data: TenantData): Promise<Tenant> {
     where: { id },
     data: {
       name: data.name,
-      roomId: data.roomId,
-      joinDate: new Date(data.joinDate),
-      isActive: data.isActive,
+      room_id: data.room_id,
+      join_date: new Date(data.join_date),
+      is_active: data.is_active,
     },
   });
 }

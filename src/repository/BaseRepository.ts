@@ -6,6 +6,7 @@ abstract class BaseRepository<TModel, TCreate = Partial<TModel>, TUpdate = Parti
   abstract delete(id: number): Promise<TModel>;
 
   getAllById?(id: number): Promise<TModel[]>;
+  getByTenantId?(id: number): Promise<TModel | null>;
   getByTenantName?(tenantName: string): Promise<TModel | null>;
 }
 

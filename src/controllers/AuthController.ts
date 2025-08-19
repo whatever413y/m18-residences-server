@@ -28,7 +28,7 @@ class AuthController {
       expiresIn: "1h",
     });
 
-    return res.status(200).json({ token, user: { role: "admin", username } });
+    return res.status(200).json({ token, username });
   }
 
   async login(req: Request, res: Response) {

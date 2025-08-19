@@ -7,14 +7,14 @@ type AdditionalChargeData = Omit<AdditionalCharge, "id" | "createdAt" | "updated
 class AdditionalChargeRepository extends BaseRepository<AdditionalCharge> {
     async getAll(): Promise<AdditionalCharge[]> {
         return prisma.additionalCharge.findMany({
-            orderBy: { createdAt: "asc" },
+            orderBy: { created_at: "asc" },
         });
     }
 
     async getAllById(billId: number): Promise<AdditionalCharge[]> {
         return prisma.additionalCharge.findMany({
-            where: { billId },
-            orderBy: { createdAt: "asc" },
+            where: { bill_id: billId },
+            orderBy: { created_at: "asc" },
         });
   }
 
@@ -35,7 +35,7 @@ class AdditionalChargeRepository extends BaseRepository<AdditionalCharge> {
   }
 
   async deleteManyByBillId(billId: number): Promise<void> {
-    await prisma.additionalCharge.deleteMany({ where: { billId } });
+    await prisma.additionalCharge.deleteMany({ where: { bill_id: billId } });
   }
 }
 

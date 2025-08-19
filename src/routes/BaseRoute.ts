@@ -15,11 +15,6 @@ class BaseRoute<T> {
 
   private initializeRoutes() {
     this.router.get(`${this.path}`, authenticate, this.controller.getAll);
-    this.router.get(
-      `${this.path}/tenant/:id`,
-      authenticate,
-      this.controller.getAllById
-    );
     this.router.get(`${this.path}/:id`, authenticate, this.controller.getById);
 
     // Admin routes
@@ -29,7 +24,7 @@ class BaseRoute<T> {
       requireAdmin,
       this.controller.create
     );
-    this.router.put(`${this.path}/:id`, authenticate, requireAdmin, upload.single("receiptFile"), this.controller.update);
+    this.router.put(`${this.path}/:id`, authenticate, requireAdmin, this.controller.update);
     this.router.delete(
       `${this.path}/:id`, authenticate,
       requireAdmin,

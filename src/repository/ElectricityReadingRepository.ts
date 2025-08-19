@@ -10,7 +10,7 @@ type ElectricityReadingData = Omit<
 class ElectricityReadingRepository extends BaseRepository<ElectricityReading> {
   async getAll(): Promise<ElectricityReading[]> {
     return prisma.electricityReading.findMany({
-      orderBy: { createdAt: "desc" },
+      orderBy: { created_at: "desc" },
     });
   }
 
@@ -19,7 +19,7 @@ class ElectricityReadingRepository extends BaseRepository<ElectricityReading> {
   }
 
   async create(data: ElectricityReadingData): Promise<ElectricityReading> {
-    const consumption = data.currReading - data.prevReading;
+    const consumption = data.curr_reading - data.prev_reading;
     return prisma.electricityReading.create({
       data: {
         ...data,
@@ -32,7 +32,7 @@ class ElectricityReadingRepository extends BaseRepository<ElectricityReading> {
     id: number,
     data: ElectricityReadingData
   ): Promise<ElectricityReading> {
-    const consumption = data.currReading - data.prevReading;
+    const consumption = data.curr_reading - data.prev_reading;
     return prisma.electricityReading.update({
       where: { id },
       data: {

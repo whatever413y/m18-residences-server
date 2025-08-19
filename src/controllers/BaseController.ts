@@ -48,6 +48,18 @@ abstract class BaseController<T> {
     }
   };
 
+  getByTenantId = async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    try {
+      const item = await this.repository.getByTenantId!(id);
+      if (!item) return res.status(404).json({ error: `${this.getRepositoryName()} not found` });
+      res.json(item);
+    } catch (err) {
+      res.status(500).json({ error: `Failed to fetch ${this.getRepositoryName()}` });
+      console.error(err);
+    }
+  };
+
   create = async (req: Request, res: Response) => {
     try {
       const newItem = await this.repository.create(req.body);

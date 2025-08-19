@@ -8,74 +8,74 @@ datasource db {
 }
 
 model Room {
-  id        Int                  @id @default(autoincrement())
-  name      String               @unique
-  rent      Int
-  createdAt DateTime             @default(now()) @map("created_at")
-  updatedAt DateTime             @updatedAt @map("updated_at")
-  readings  ElectricityReading[]
-  tenants   Tenant[]
+  id         Int                  @id @default(autoincrement())
+  name       String               @unique
+  rent       Int
+  created_at DateTime             @default(now())
+  updated_at DateTime             @updatedAt
+  readings   ElectricityReading[]
+  tenants    Tenant[]
 
   @@map("Rooms")
 }
 
 model Tenant {
-  id        Int                  @id @default(autoincrement())
-  roomId    Int                  @map("room_id")
-  name      String               @unique
-  isActive  Boolean              @default(true) @map("is_active")
-  joinDate  DateTime             @default(now()) @map("join_date")
-  createdAt DateTime             @default(now()) @map("created_at")
-  updatedAt DateTime             @updatedAt @map("updated_at")
-  bills     Bill[]
-  readings  ElectricityReading[]
-  room      Room                 @relation(fields: [roomId], references: [id])
+  id         Int                  @id @default(autoincrement())
+  room_id    Int
+  name       String               @unique
+  is_active  Boolean              @default(true)
+  join_date  DateTime             @default(now())
+  created_at DateTime             @default(now())
+  updated_at DateTime             @updatedAt
+  bills      Bill[]
+  readings   ElectricityReading[]
+  room       Room                 @relation(fields: [room_id], references: [id])
 
   @@map("Tenants")
 }
 
 model ElectricityReading {
-  id          Int      @id @default(autoincrement())
-  tenantId    Int      @map("tenant_id")
-  roomId      Int      @map("room_id")
-  prevReading Int      @map("prev_reading")
-  currReading Int      @map("curr_reading")
-  consumption Int
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  bill        Bill?
-  room        Room     @relation(fields: [roomId], references: [id])
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  id           Int      @id @default(autoincrement())
+  tenant_id    Int
+  room_id      Int
+  prev_reading Int
+  curr_reading Int
+  consumption  Int
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  bill         Bill?
+  room         Room     @relation(fields: [room_id], references: [id])
+  tenant       Tenant   @relation(fields: [tenant_id], references: [id])
 
   @@map("Electricity_Readings")
 }
 
 model Bill {
-  id                Int                @id @default(autoincrement())
-  readingId         Int                @unique(map: "Bills_readingId_key") @map("reading_id")
-  tenantId          Int                @map("tenant_id")
-  roomCharges       Int                @default(0) @map("room_charges")
-  electricCharges   Int                @default(0) @map("electric_charges")
-  totalAmount       Int                @map("total_amount")
-  receiptUrl        String?            @map("receipt_url")
-  paid              Boolean            @default(false)
-  createdAt         DateTime           @default(now()) @map("created_at")
-  updatedAt         DateTime           @updatedAt @map("updated_at")
-  additionalCharges AdditionalCharge[]
-  reading           ElectricityReading @relation(fields: [readingId], references: [id], map: "Bills_readingId_fkey")
-  tenant            Tenant             @relation(fields: [tenantId], references: [id])
+  id                 Int                @id @default(autoincrement())
+  reading_id         Int                @unique(map: "Bills_readingId_key") @map("reading_id")
+  tenant_id          Int
+  room_charges       Int                @default(0)
+  electric_charges   Int                @default(0)
+  total_amount       Int
+  receipt_url        String?
+  paid               Boolean            @default(false)
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
+  additional_charges AdditionalCharge[]
+  reading            ElectricityReading @relation(fields: [reading_id], references: [id], map: "Bills_readingId_fkey")
+  tenant             Tenant             @relation(fields: [tenant_id], references: [id])
 
   @@map("Bills")
 }
 
 model AdditionalCharge {
   id          Int      @id @default(autoincrement())
-  billId      Int      @map("bill_id")
+  bill_id     Int
   amount      Int      @default(0)
   description String
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  bill        Bill     @relation(fields: [bill_id], references: [id], onDelete: Cascade)
 
   @@map("Additional_Charges")
 }

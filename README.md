@@ -12,7 +12,7 @@ A backend service for managing room rental, tenants, bills, and electricity read
 - RESTful API endpoints
 
 ## Project Structure
-
+```
 m18-residences-service/
 ├── src/
 │   ├── main.rs                # Application entry point
@@ -26,7 +26,7 @@ m18-residences-service/
 ├── .env                       # Environment variables
 ├── .env.example               # Example env file for reference
 ├── README.md                  # Project documentation
-
+```
 ## Getting Started
 
 ### Prerequisites

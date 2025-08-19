@@ -5,11 +5,9 @@ mod repository;
 mod routes;
 mod services;
 
-use axum::{Extension, Router, response::Json, routing::get, middleware::from_fn};
-use middleware::{cors::cors_layer, db};
+use axum::{middleware::from_fn, response::Json, routing::get, Extension, Router};
+use middleware::{cors::cors_layer, db, jwt::require_auth};
 use std::{net::SocketAddr, time::Duration};
-use tokio::signal;
-use services::r2_service::init_r2;
 
 #[tokio::main]
 async fn main() {
@@ -28,16 +26,16 @@ async fn main() {
     };
 
     // Initialize R2 client
-    let r2 = init_r2().await;
+    let r2 = services::r2_service::init_r2().await;
 
     // Helper to apply JWT auth to a router
-    let protected = |router: Router| router.route_layer(from_fn(middleware::jwt::require_auth));
+    let protected = |router: Router| router.route_layer(from_fn(require_auth));
 
     // Build app
     let app = Router::new()
         // Public routes
         .nest("/api/auth", routes::auth_routes::auth_routes())
-        .route("/", get(|| async { "Rental Management API is up" }))
+        .route("/", get(|| async { "API is up" }))
         .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
         
         // Protected routes
@@ -66,7 +64,7 @@ async fn main() {
     let handle = axum_server::Handle::new();
     let graceful = handle.clone();
     tokio::spawn(async move {
-        signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+        tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
         println!("⚠️ Ctrl+C received, shutting down...");
         graceful.graceful_shutdown(Some(Duration::from_secs(5)));
     });

@@ -8,20 +8,20 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct BillWithChargesAndReading {
     pub bill: bill::Model,
     pub additional_charges: Vec<additional_charge::Model>,
     pub reading: Option<electricity_reading::Model>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AdditionalChargeInput {
     pub amount: i32,
     pub description: String,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BillInput {
     pub tenant_id: i32,
     pub reading_id: i32,

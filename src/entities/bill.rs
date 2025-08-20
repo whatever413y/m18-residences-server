@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::entities::{tenant, electricity_reading, additional_charge};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize)]
-#[sea_orm(table_name = "Bills")]
+#[sea_orm(table_name = "bill")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,

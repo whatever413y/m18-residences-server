@@ -12,7 +12,8 @@ A backend service for managing room rental, tenants, bills, and electricity read
 - RESTful API endpoints
 
 ## Project Structure
-```
+
+```sh
 m18-residences-service/
 ├── src/
 │   ├── main.rs                # Application entry point
@@ -27,6 +28,7 @@ m18-residences-service/
 ├── .env.example               # Example env file for reference
 ├── README.md                  # Project documentation
 ```
+
 ## Getting Started
 
 ### Prerequisites
@@ -51,6 +53,11 @@ m18-residences-service/
    - Cloudflare R2 credentials
 
 3. Run database migrations.
+
+   ```sh
+   cargo install sea-orm-cli
+   sea-orm-cli migrate up
+   ```
 
 4. Build and run the server:
 

@@ -5,6 +5,7 @@ Cargo.lock
 
 # ---- Environment & Config ----
 .env
+.env.test
 
 # ---- IDEs & Editors ----
 .vscode/

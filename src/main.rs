@@ -1,12 +1,7 @@
-mod entities;
-mod handlers;
-mod middleware;
-mod repository;
-mod routes;
-mod services;
-
+use m18_residences_server::services;
+use m18_residences_server::routes;
 use axum::{middleware::from_fn, response::Json, routing::get, Extension, Router};
-use middleware::{cors::cors_layer, db, jwt::require_auth};
+use m18_residences_server::middleware::{cors::cors_layer, db, jwt::require_auth};
 use std::{net::SocketAddr, time::Duration};
 
 #[tokio::main]

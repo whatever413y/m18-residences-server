@@ -15,17 +15,21 @@ A backend service for managing room rental, tenants, bills, and electricity read
 
 ```sh
 m18-residences-service/
+├── migrations/                # # Database schema migrations (managed by SeaORM)
 ├── src/
 │   ├── main.rs                # Application entry point
+│   ├── lib.rs                 # Library root (shared logic, exports)
+│   ├── test_utils.rs          # Test helpers/utilities
 │   ├── entities/              # Database models (SeaORM entities)
 │   ├── handlers/              # HTTP request handlers (Axum)
 │   ├── middleware/            # Authentication, CORS, etc.
 │   ├── repository/            # Database access logic
 │   ├── routes/                # Route definitions
 │   ├── services/              # Business logic, integrations (e.g., S3, JWT)
+├── tests/                     # Integration tests
 ├── Cargo.toml                 # Rust package manifest
-├── .env                       # Environment variables
 ├── .env.example               # Example env file for reference
+├── .env.test.example          # Example test env file for reference
 ├── README.md                  # Project documentation
 ```
 

@@ -51,6 +51,7 @@ m18-residences-service/
 
 2. Copy `.env.example` to `.env` and fill in your configuration:
 
+   - Localhost origin URL for browser-based CORS (LOCALHOST_URL)
    - Database connection string
    - JWT secret
    - Admin credentials

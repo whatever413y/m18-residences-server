@@ -1,9 +1,8 @@
-use sea_orm::Database;
-use sea_orm::DatabaseConnection;
-use migration::{Migrator, MigratorTrait, sea_orm::Database as MigrationDatabase, sea_orm::DatabaseConnection as MigrationDatabaseConnection};
+use migration::{Migrator, MigratorTrait};
+use sea_orm::{Database, DatabaseConnection};
 
 pub async fn run_migrations(url: &str) {
-    let db: MigrationDatabaseConnection = MigrationDatabase::connect(url)
+    let db = Database::connect(url)
         .await
         .expect("Failed to connect for migrations");
     Migrator::up(&db, None).await.expect("Failed to run migrations");

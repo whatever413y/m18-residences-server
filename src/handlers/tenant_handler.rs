@@ -24,7 +24,7 @@ pub async fn get_tenants(
     Ok(Json(tenants))
 }
 
-/// GET /tenants/:id
+/// GET /tenants/{id}
 pub async fn get_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -36,7 +36,7 @@ pub async fn get_tenant(
     }
 }
 
-/// GET /tenants/by-name/:name
+/// GET /tenants/tenant/{name}
 pub async fn get_tenant_by_name(
     Path(name): Path<String>,
     Extension(db): Extension<DatabaseConnection>,
@@ -67,7 +67,7 @@ pub async fn create_tenant(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// PUT /tenants/:id
+/// PUT /tenants/{id}
 pub async fn update_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -88,7 +88,7 @@ pub async fn update_tenant(
     }
 }
 
-/// DELETE /tenants/:id
+/// DELETE /tenants/{id}
 pub async fn delete_tenant(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,

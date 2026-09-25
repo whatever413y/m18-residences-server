@@ -7,7 +7,7 @@ use axum::{
 use crate::services::r2_service::get_signed_url;
 use crate::services::r2_service::R2Config;
 
-/// GET /api/files/receipts/:tenant_name/:filename
+/// GET /api/signed-urls/receipts/{tenant_name}/{filename}
 pub async fn get_receipt_signed_url_handler(
     Path((tenant_name, filename)): Path<(String, String)>,
     Extension(r2): Extension<R2Config>,
@@ -23,7 +23,7 @@ pub async fn get_receipt_signed_url_handler(
     }
 }
 
-/// GET /api/files/payments/:filename
+/// GET /api/signed-urls/payments/{filename}
 pub async fn get_payment_signed_url_handler(
     Path(filename): Path<String>,
     Extension(r2): Extension<R2Config>,

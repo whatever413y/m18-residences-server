@@ -13,7 +13,7 @@ pub struct ReadingInput {
     pub curr_reading: i32,
 }
 
-/// GET /readings
+/// GET /electricity-readings
 pub async fn get_readings(
     Extension(db): Extension<DatabaseConnection>,
 ) -> Result<Json<Vec<electricity_reading::Model>>, StatusCode> {
@@ -23,7 +23,7 @@ pub async fn get_readings(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// GET /readings/:id
+/// GET /electricity-readings/{id}
 pub async fn get_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -35,7 +35,7 @@ pub async fn get_reading(
     }
 }
 
-/// POST /readings
+/// POST /electricity-readings
 pub async fn create_reading(
     Extension(db): Extension<DatabaseConnection>,
     Json(payload): Json<ReadingInput>,
@@ -54,7 +54,7 @@ pub async fn create_reading(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// PUT /readings/:id
+/// PUT /electricity-readings/{id}
 pub async fn update_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -75,7 +75,7 @@ pub async fn update_reading(
     }
 }
 
-/// DELETE /readings/:id
+/// DELETE /electricity-readings/{id}
 pub async fn delete_reading(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,

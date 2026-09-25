@@ -1,12 +1,15 @@
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Statement};
+//! Helpers shared by the DB-backed test binaries (`tests/api.rs`,
+//! `tests/repository/`). Each binary compiles this module separately and uses
+//! only part of it, hence the `dead_code` allowance.
+#![allow(dead_code)]
+
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use std::env;
 
-#[cfg(test)]
 fn load_env() {
     dotenvy::from_filename(".env.test").ok();
 }
 
-#[cfg(test)]
 pub async fn get_test_db() -> DatabaseConnection {
     load_env();
 
@@ -18,10 +21,7 @@ pub async fn get_test_db() -> DatabaseConnection {
 }
 
 /// Reset a specific table
-#[cfg(test)]
 pub async fn reset_table(db: &DatabaseConnection, table_name: &str) {
     let sql = format!("TRUNCATE TABLE {} RESTART IDENTITY CASCADE;", table_name);
-    db.execute(Statement::from_string(db.get_database_backend(), sql))
-        .await
-        .unwrap();
+    db.execute_unprepared(&sql).await.unwrap();
 }

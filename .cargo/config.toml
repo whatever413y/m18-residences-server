@@ -1,0 +1,4 @@
+[env]
+# The DB tests share one database (m18_test) and TRUNCATE tables, so the tests
+# inside each test binary must run one at a time.
+RUST_TEST_THREADS = "1"

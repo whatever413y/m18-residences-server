@@ -33,7 +33,7 @@ pub async fn get_bills(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// GET /bills/:tenant_id/bill
+/// GET /bills/{tenant_id}/bill
 pub async fn get_bill_by_tenant(
     Path(tenant_id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -45,7 +45,7 @@ pub async fn get_bill_by_tenant(
     }
 }
 
-/// GET /tenants/:tenant_id/bills
+/// GET /bills/{tenant_id}/bills
 pub async fn get_bills_by_tenant(
     Path(tenant_id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -76,7 +76,7 @@ pub async fn create_bill_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// PUT /bills/:id (JSON update)
+/// PUT /bills/{id} (JSON update)
 pub async fn update_bill_json_handler(
     Extension(db): Extension<DatabaseConnection>,
     Path(id): Path<i32>,
@@ -97,7 +97,7 @@ pub async fn update_bill_json_handler(
     }
 }
 
-/// PUT /bills/:id (Multipart update with file upload)
+/// PUT /bills/{id}/upload (Multipart update with file upload)
 pub async fn update_bill_multipart_handler(
     Extension(db): Extension<DatabaseConnection>,
     Extension(r2): Extension<R2Config>,
@@ -172,7 +172,7 @@ pub async fn update_bill_multipart_handler(
     }
 }
 
-/// DELETE /bills/:id
+/// DELETE /bills/{id}
 pub async fn delete_bill(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,

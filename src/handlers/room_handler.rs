@@ -21,7 +21,7 @@ pub async fn get_rooms(
     Ok(Json(rooms))
 }
 
-/// GET /rooms/:id
+/// GET /rooms/{id}
 pub async fn get_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -50,7 +50,7 @@ pub async fn create_room(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// PUT /rooms/:id
+/// PUT /rooms/{id}
 pub async fn update_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,
@@ -69,7 +69,7 @@ pub async fn update_room(
     }
 }
 
-/// DELETE /rooms/:id
+/// DELETE /rooms/{id}
 pub async fn delete_room(
     Path(id): Path<i32>,
     Extension(db): Extension<DatabaseConnection>,

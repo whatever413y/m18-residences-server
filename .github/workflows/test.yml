@@ -1,0 +1,58 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, update]
+  pull_request:
+    branches: [main, update]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: m18_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Test-only values (no real secrets). The tests read these from the process
+    # env; locally they come from .env.test instead.
+    env:
+      CARGO_TERM_COLOR: always
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/m18_test
+      JWT_SECRET: ci_test_jwt_secret
+      ADMIN_USERNAME: test-admin
+      ADMIN_PASSWORD: test-password
+      LOCALHOST_URL: http://localhost:50001,http://localhost:50002
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            migration -> target
+
+      - name: Migrate test database
+        working-directory: migration
+        run: cargo run -- up -u "$TEST_DATABASE_URL"
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Test
+        run: cargo test

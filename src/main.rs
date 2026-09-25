@@ -1,12 +1,15 @@
+use m18_residences_server::app::app;
+use m18_residences_server::middleware::db;
 use m18_residences_server::services;
-use m18_residences_server::routes;
-use axum::{middleware::from_fn, response::Json, routing::get, Extension, Router};
-use m18_residences_server::middleware::{cors::cors_layer, db, jwt::require_auth};
 use std::{net::SocketAddr, time::Duration};
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().ok();
+    // rustls is compiled with two crypto backends (ring via sqlx, aws-lc-rs via the AWS SDK), so it can't
+    // choose a default on its own; TLS paths that rely on the default (e.g. sslmode=verify-ca) would panic.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    dotenvy::dotenv().ok();
 
     // Connect to database
     let db = match db::connect().await {
@@ -23,30 +26,8 @@ async fn main() {
     // Initialize R2 client
     let r2 = services::r2_service::init_r2().await;
 
-    // Helper to apply JWT auth to a router
-    let protected = |router: Router| router.route_layer(from_fn(require_auth));
-
     // Build app
-    let app = Router::new()
-        // Public routes
-        .nest("/api/auth", routes::auth_routes::auth_routes())
-        .route("/", get(|| async { "API is up" }))
-        .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
-        
-        // Protected routes
-        .nest("/api/signed-urls", protected(routes::signed_url_routes::signed_url_routes()))
-        .nest("/api/rooms", protected(routes::room_routes::room_routes()))
-        .nest("/api/tenants", protected(routes::tenant_routes::tenant_routes()))
-        .nest(
-            "/api/electricity-readings",
-            protected(routes::electricity_reading_routes::electricity_reading_routes()),
-        )
-        .nest("/api/bills", protected(routes::bill_routes::bill_routes()))
-
-        // Global layers
-        .layer(cors_layer())
-        .layer(Extension(db))
-        .layer(Extension(r2));
+    let router = app(db, r2);
 
     // Server address
     let addr = SocketAddr::from((
@@ -67,7 +48,7 @@ async fn main() {
     // Start server
     if let Err(err) = axum_server::bind(addr)
         .handle(handle)
-        .serve(app.into_make_service())
+        .serve(router.into_make_service())
         .await
     {
         eprintln!("Server error: {}", err);

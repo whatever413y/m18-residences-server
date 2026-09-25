@@ -51,7 +51,7 @@ m18-residences-service/
 
 2. Copy `.env.example` to `.env` and fill in your configuration:
 
-   - Localhost origin URL for browser-based CORS (LOCALHOST_URL)
+   - Localhost origin URLs for browser-based CORS (LOCALHOST_URL, comma-separated — admin app on 50001, tenant app on 50002)
    - Database connection string
    - JWT secret
    - Admin credentials
@@ -71,7 +71,7 @@ m18-residences-service/
    cargo run
    ```
 
-The server will start on the port specified in your `.env` file.
+The server will start on the port specified in your `.env` file (default 50000).
 
 ## API Endpoints
 

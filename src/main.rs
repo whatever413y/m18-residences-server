@@ -51,7 +51,7 @@ async fn main() {
     // Server address
     let addr = SocketAddr::from((
         [0, 0, 0, 0],
-        std::env::var("PORT").unwrap_or("3001".to_string()).parse().unwrap(),
+        std::env::var("PORT").unwrap_or("50000".to_string()).parse().unwrap(),
     ));
     println!("Server running on {}", addr);
 

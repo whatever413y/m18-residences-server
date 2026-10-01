@@ -1,6 +1,6 @@
+use crate::entities::{room, tenant};
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
-use crate::entities::{tenant, room};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "electricity_reading")]
@@ -18,9 +18,17 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(belongs_to = "tenant::Entity", from = "Column::TenantId", to = "tenant::Column::Id")]
+    #[sea_orm(
+        belongs_to = "tenant::Entity",
+        from = "Column::TenantId",
+        to = "tenant::Column::Id"
+    )]
     Tenant,
-    #[sea_orm(belongs_to = "room::Entity", from = "Column::RoomId", to = "room::Column::Id")]
+    #[sea_orm(
+        belongs_to = "room::Entity",
+        from = "Column::RoomId",
+        to = "room::Column::Id"
+    )]
     Room,
 }
 

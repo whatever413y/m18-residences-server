@@ -1,37 +1,65 @@
-use axum::{middleware::from_fn, response::Json, routing::get, Extension, Router};
-use sea_orm::DatabaseConnection;
+//! Builds the API: the three domain routers, the health routes, CORS, and the
+//! state every handler can reach.
+use std::sync::Arc;
 
-use crate::middleware::{cors::cors_layer, jwt::require_auth};
-use crate::routes;
-use crate::services::r2_service::R2Config;
+use axum::{
+    Json, Router,
+    extract::{FromRef, State},
+    routing::get,
+};
+use m18_residences_db::Db;
+use m18_residences_shared_rs::{
+    auth::JwtKeys,
+    config::Config,
+    cors::cors_layer,
+    files::{FileSigner, FileStore},
+};
+use serde_json::{Value, json};
 
-/// Builds the application router: public routes, JWT-protected API routes and
-/// the global layers (CORS, DB connection, R2 client).
-///
-/// `cors_layer()` reads `LOCALHOST_URL`/`PRODUCTION_URL` when this runs, so the
-/// environment must be loaded before calling it.
-pub fn app(db: DatabaseConnection, r2: R2Config) -> Router {
-    // Helper to apply JWT auth to a router
-    let protected = |router: Router| router.route_layer(from_fn(require_auth));
+#[derive(Clone)]
+pub struct AppState {
+    pub db: Db,
+    pub files: Arc<dyn FileStore>,
+    pub config: Arc<Config>,
+    pub jwt: JwtKeys,
+    pub signer: Arc<FileSigner>,
+    /// The deployed version (the commit it was deployed with), if known.
+    pub version: Option<String>,
+}
 
+impl AppState {
+    pub fn new(db: Db, files: Arc<dyn FileStore>, config: Config, version: Option<String>) -> Self {
+        let jwt = JwtKeys::new(&config.jwt_secret);
+        let signer = Arc::new(FileSigner::new(&config.jwt_secret));
+        Self {
+            db,
+            files,
+            config: Arc::new(config),
+            jwt,
+            signer,
+            version,
+        }
+    }
+}
+
+impl FromRef<AppState> for JwtKeys {
+    fn from_ref(state: &AppState) -> Self {
+        state.jwt.clone()
+    }
+}
+
+pub fn app(state: AppState) -> Router {
+    let cors = cors_layer(&state.config.allowed_origins);
     Router::new()
-        // Public routes
-        .nest("/api/auth", routes::auth_routes::auth_routes())
         .route("/", get(|| async { "API is up" }))
-        .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
+        .route("/health", get(health))
+        .merge(crate::accounts::router(&state))
+        .merge(crate::property::router(&state))
+        .merge(crate::billing::router(&state))
+        .layer(cors)
+        .with_state(state)
+}
 
-        // Protected routes
-        .nest("/api/signed-urls", protected(routes::signed_url_routes::signed_url_routes()))
-        .nest("/api/rooms", protected(routes::room_routes::room_routes()))
-        .nest("/api/tenants", protected(routes::tenant_routes::tenant_routes()))
-        .nest(
-            "/api/electricity-readings",
-            protected(routes::electricity_reading_routes::electricity_reading_routes()),
-        )
-        .nest("/api/bills", protected(routes::bill_routes::bill_routes()))
-
-        // Global layers
-        .layer(cors_layer())
-        .layer(Extension(db))
-        .layer(Extension(r2))
+async fn health(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({ "status": "ok", "version": state.version }))
 }

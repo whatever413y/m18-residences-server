@@ -1,8 +1,14 @@
 # ---- Rust ----
-/target/      
-**/*.rs.bk          
+/target/
+**/*.rs.bk
 
-# ---- Environment & Config ----
+# ---- Workers ----
+/build/
+.wrangler/
+.dev.vars
+node_modules/
+
+# ---- Old local config (the native server's) ----
 .env
 .env.test
 
@@ -10,11 +16,3 @@
 .vscode/
 .idea/
 .DS_Store
-
-# Migration
-migration/target/
-
-# Node
-dist/
-node_modules/
-pnpm-lock.yaml

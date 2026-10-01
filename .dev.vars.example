@@ -1,0 +1,7 @@
+# Local configuration for `wrangler dev`: copy to .dev.vars (gitignored).
+# Production values are Worker secrets (`wrangler secret put <NAME>`) and vars.
+JWT_SECRET="change-me-to-a-long-random-string"
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD="change-me"
+# The local Flutter apps (admin on 50001, tenant on 50002).
+ALLOWED_ORIGINS="http://localhost:50001,http://localhost:50002"

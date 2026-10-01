@@ -1,6 +1,6 @@
+use crate::entities::{additional_charge, electricity_reading, tenant};
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
-use crate::entities::{tenant, electricity_reading, additional_charge};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "bill")]
@@ -21,9 +21,17 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(belongs_to = "electricity_reading::Entity", from = "Column::ReadingId", to = "electricity_reading::Column::Id")]
+    #[sea_orm(
+        belongs_to = "electricity_reading::Entity",
+        from = "Column::ReadingId",
+        to = "electricity_reading::Column::Id"
+    )]
     Reading,
-    #[sea_orm(belongs_to = "tenant::Entity", from = "Column::TenantId", to = "tenant::Column::Id")]
+    #[sea_orm(
+        belongs_to = "tenant::Entity",
+        from = "Column::TenantId",
+        to = "tenant::Column::Id"
+    )]
     Tenant,
     #[sea_orm(has_many = "additional_charge::Entity")]
     AdditionalCharges,

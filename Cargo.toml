@@ -1,25 +1,63 @@
 [package]
 name = "m18-residences-server"
 version = "0.1.0"
+edition.workspace = true
+publish = false
+
+# A Cloudflare Worker (wasm32, built by worker-build) and an rlib for the native tests.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+members = ["crates/db", "crates/shared_rs"]
+# Plain `cargo test` / `cargo clippy` cover the shared crates too.
+default-members = [".", "crates/db", "crates/shared_rs"]
+
+[workspace.package]
 edition = "2024"
 
-[dependencies]
-axum = { version = "0.8.9", features = ["multipart"] }
-axum-server = "0.8.0"
-tokio = { version = "1.53.1", features = ["full"] }
-tower-http = { version = "0.7.1", features = ["cors"] }
+[workspace.dependencies]
+m18_residences_db = { path = "crates/db" }
+m18_residences_shared_rs = { path = "crates/shared_rs" }
+async-trait = "0.1"
+axum = { version = "0.8.9", default-features = false, features = ["json", "query", "multipart"] }
+base64 = "0.22"
+chrono = { version = "0.4.45", features = ["serde"] }
+hmac = "0.12"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+# `sqlite-use-returning-for-3_35`: inserts and updates read the row back with RETURNING (D1 supports it).
+# `proxy` (the D1 adapter) is enabled for wasm only, in crates/db: SeaORM 2.0.4 fails to compile with
+# `proxy` and `sqlx-sqlite` (the native tests) together.
+sea-orm = { version = "2.0.4", default-features = false, features = ["macros", "with-chrono", "sqlite-use-returning-for-3_35"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-dotenvy = "0.15.7"
-sea-orm = { version = "2.0.3", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
-chrono = { version = "0.4.45", features = ["serde"] }
-aws-sdk-s3 = { version = "1.149.0", features = ["behavior-version-latest"] }
-aws-types = "1.6.0"
-jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
-mime_guess = "2.0.5"
-# Direct dependency only to pick the process-wide crypto provider in main() (see there).
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
-migration = { path = "./migration" }
+sha2 = "0.10"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["cors"] }
+tower-service = "0.3"
+worker = { version = "0.8.7", features = ["d1", "http", "axum"] }
+
+[dependencies]
+m18_residences_db = { workspace = true }
+m18_residences_shared_rs = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+sea-orm = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tower-service = { workspace = true }
+worker = { workspace = true }
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
+m18_residences_db = { workspace = true, features = ["sqlite"] }
+tokio = { workspace = true }
+tower = { workspace = true }
+
+# No `strip`: it removes the wasm section wasm-bindgen needs for worker-build's panic-recovery wrappers.
+[profile.release]
+lto = true
+codegen-units = 1

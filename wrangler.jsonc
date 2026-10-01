@@ -1,0 +1,22 @@
+// The API Worker. Secrets (JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD) are set with
+// `wrangler secret put`; for `wrangler dev` they come from .dev.vars (see .dev.vars.example).
+{
+  "name": "m18-residences-api",
+  "main": "build/index.js",
+  "compatibility_date": "2026-09-29",
+  "build": { "command": "worker-build --release" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "m18-residences",
+      // Placeholder until the production database exists; local dev and e2e don't need the real id.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "crates/db/migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "m18-residences" }],
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // ALLOWED_ORIGINS (the deployed app origins) is set once the workers.dev subdomain is known.
+  "vars": {},
+  "observability": { "enabled": true }
+}

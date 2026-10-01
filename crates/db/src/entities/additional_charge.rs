@@ -1,6 +1,6 @@
+use crate::entities::bill;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
-use crate::entities::bill;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "additional_charge")]
@@ -16,7 +16,11 @@ pub struct Model {
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(belongs_to = "bill::Entity", from = "Column::BillId", to = "bill::Column::Id")]
+    #[sea_orm(
+        belongs_to = "bill::Entity",
+        from = "Column::BillId",
+        to = "bill::Column::Id"
+    )]
     Bill,
 }
 

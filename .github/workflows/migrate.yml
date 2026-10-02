@@ -18,6 +18,8 @@ concurrency:
 jobs:
   migrate:
     uses: whatever413y/.github/.github/workflows/d1-migrate.yml@v1
+    # Cross-repo reusable workflows only see the caller's (environment) secrets when they are passed on.
+    secrets: inherit
     with:
       database: m18-residences
       command: ${{ inputs.command }}

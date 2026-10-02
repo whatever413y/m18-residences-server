@@ -9,14 +9,16 @@
     {
       "binding": "DB",
       "database_name": "m18-residences",
-      // Placeholder until the production database exists; local dev and e2e don't need the real id.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Created by m18-residences-infra (Terraform output d1_database_id).
+      "database_id": "77835b0c-7eb4-4aaa-a6f0-6d03bba89e36",
       "migrations_dir": "crates/db/migrations"
     }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "m18-residences" }],
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
-  // ALLOWED_ORIGINS (the deployed app origins) is set once the workers.dev subdomain is known.
-  "vars": {},
+  // The deployed apps. Local dev and e2e override it (.dev.vars / --env-file).
+  "vars": {
+    "ALLOWED_ORIGINS": "https://admin.m18-residences.workers.dev,https://my.m18-residences.workers.dev"
+  },
   "observability": { "enabled": true }
 }

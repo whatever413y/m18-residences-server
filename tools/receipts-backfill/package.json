@@ -1,0 +1,10 @@
+{
+  "name": "m18-receipts-backfill",
+  "private": true,
+  "type": "module",
+  "description": "One-time: re-encode the stored receipt images as WebP (originals kept under receipts-originals/ for 30 days).",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3",
+    "sharp": "^0.34"
+  }
+}

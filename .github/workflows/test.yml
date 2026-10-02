@@ -7,34 +7,5 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    env:
-      CARGO_TERM_COLOR: always
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (native and the Worker's wasm32 target)
-        run: |
-          cargo clippy --all-targets -- -D warnings
-          cargo clippy --target wasm32-unknown-unknown -- -D warnings
-
-      # Native tests: each test gets its own in-memory SQLite with the D1 migrations applied.
-      - name: Test
-        run: cargo test
-
-      - name: Build the Worker bundle
-        run: |
-          cargo install worker-build --locked --version '^0.8'
-          worker-build --release
+  check:
+    uses: whatever413y/.github/.github/workflows/rust-worker-ci.yml@v1

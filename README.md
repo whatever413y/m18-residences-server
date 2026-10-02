@@ -1,113 +1,102 @@
 # M18 Residences Server
 
-A backend service for managing room rental, tenants, bills, and electricity readings built with Rust and Axum.
+The M18 Residences API: rooms, tenants, electricity readings, bills and receipts. Rust (Axum 0.8 + SeaORM 2.0)
+running as one Cloudflare Worker (https://api.m18-residences.workers.dev) on a D1 database and an R2 bucket.
 
-## Features
-
-- Tenant and room management
-- Bill generation and tracking
-- Electricity reading records
-- JWT-based authentication (admin and tenant)
-- Cloudflare R2 file uploads and signed URLs for receipts.
-- RESTful API endpoints
-
-## Project Structure
+## Layout
 
 ```sh
 m18-residences-server/
-├── .cargo/config.toml         # Runs tests one at a time (they share the test DB)
-├── .github/workflows/test.yml # CI: migrate a Postgres service, clippy, cargo test
-├── migration/                 # Database schema migrations (SeaORM migrator crate)
+├── Cargo.toml            # Workspace + the Worker crate (cdylib for the Worker, rlib for native tests)
+├── wrangler.jsonc        # Worker "api": D1 binding DB, R2 binding FILES, vars, build command
+├── .dev.vars.example     # Local config for `wrangler dev` (copy to .dev.vars)
 ├── src/
-│   ├── main.rs                # Entry point: env, DB, R2, server + graceful shutdown
-│   ├── lib.rs                 # Library root (shared logic, exports)
-│   ├── app.rs                 # Router: routes, JWT protection, global layers
-│   ├── entities/              # Database models (SeaORM entities)
-│   ├── handlers/              # HTTP request handlers (Axum)
-│   ├── middleware/            # Authentication, CORS, etc.
-│   ├── repository/            # Database access logic
-│   ├── routes/                # Route definitions
-│   ├── services/              # Business logic, integrations (e.g., S3, JWT)
-├── tests/
-│   ├── common/mod.rs          # Test DB helpers (get_test_db, reset_table)
-│   ├── repository/            # Repository tests (one test binary)
-│   ├── api.rs                 # API end-to-end tests through the real router
-├── Cargo.toml                 # Rust package manifest
-├── Cargo.lock                 # Locked dependency versions (committed)
-├── .env.example               # Example env file for reference
-├── .env.test.example          # Example test env file for reference
-├── README.md                  # Project documentation
+│   ├── app.rs            # Router: the three domains, /, /health, CORS, AppState
+│   ├── worker_entry.rs   # Worker fetch handler (wasm only): bindings + config → app
+│   ├── accounts/         # /api/auth: admin and tenant login, token validation
+│   ├── property/         # /api/rooms, /api/tenants, /api/electricity-readings
+│   └── billing/          # /api/bills, /api/signed-urls, /api/files (receipts and payment images)
+├── crates/
+│   ├── shared_rs/        # auth, errors, config, CORS, file storage + signed links, extractors, logging
+│   └── db/               # entities, D1 adapter, migrations/*.sql (the schema's only source)
+├── tests/                # native integration tests (in-memory SQLite + in-memory file store)
+└── tools/                # one-off Node tools: pg-to-d1 (data move), receipts-backfill (WebP conversion)
 ```
 
-## Getting Started
+Each domain folder has `routes/ → handlers/ → services/ → repository/` and could be moved into its own Worker:
+it only uses itself, `crate::app` and the shared crates, writes only its own tables, and reads other tables
+through its own `*_read_repo.rs`. `tests/boundaries.rs` checks these rules.
 
-### Prerequisites
+## Local development
 
-- [Rust](https://www.rust-lang.org/tools/install)
-- PostgreSQL database
-- Cloudflare R2 account (for file storage)
+Prerequisites: Rust (stable) with `rustup target add wasm32-unknown-unknown`, `cargo install worker-build`,
+Node 22 (wrangler runs through `npx`). No database server.
 
-### Setup
+```sh
+cp .dev.vars.example .dev.vars                                       # local secrets and allowed origins
+npx wrangler@4.145.0 d1 migrations apply m18-residences --local     # local D1 schema (in .wrangler/)
+npx wrangler@4.145.0 dev --port 50000                               # builds the Worker and serves it
+curl http://localhost:50000/health                                  # {"status":"ok","version":null}
+```
 
-1. Clone the repository:
+Local D1 and R2 live in `.wrangler/` (gitignored). The Flutter apps run on ports 50001 (admin) and 50002 (tenant),
+the origins `.dev.vars` allows.
 
-   ```sh
-   git clone https://github.com/yourusername/m18-residences-server.git
-   cd m18-residences-server
-   ```
+Configuration: `ALLOWED_ORIGINS` (comma-separated), `JWT_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`. If any is
+missing, every request fails with a 500 that names it. In production `ALLOWED_ORIGINS` is in `wrangler.jsonc`,
+the others are Worker secrets (`npx wrangler@4.145.0 secret put <NAME>`).
 
-2. Copy `.env.example` to `.env` and fill in your configuration:
+## Database
 
-   - Localhost origin URLs for browser-based CORS (LOCALHOST_URL, comma-separated — admin app on 50001, tenant app on 50002)
-   - Database connection string
-   - JWT secret
-   - Admin credentials
-   - Cloudflare R2 credentials
+D1 (SQLite). The schema is `crates/db/migrations/*.sql`, mirrored by `crates/db/src/entities/` and
+`crates/db/src/schema.rs`. A change is a new numbered file; an applied migration is never edited.
 
-3. Run database migrations.
+- Locally: `npx wrangler@4.145.0 d1 migrations apply m18-residences --local`.
+- Production: the **Migrate production database** workflow (`migrate.yml`; `list`, then `apply` after your
+  approval), before merging code that needs the change.
 
-   ```sh
-   cargo install sea-orm-cli
-   sea-orm-cli migrate up
-   ```
+D1 has no interactive transactions: writes that must happen together go through `db.atomic(statements)`, one
+D1 batch.
 
-4. Build and run the server:
+## Tests
 
-   ```sh
-   cargo build
-   cargo run
-   ```
+```sh
+cargo test
+```
 
-The server will start on the port specified in your `.env` file (default 50000).
+Runs everything natively, without Cloudflare: the domains through the real router on in-memory SQLite with the
+same migrations, plus unit tests in the crates. The contract fixtures that `m18_residences_shared` tests against:
 
-## Testing
+```powershell
+$env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fixtures'; cargo test export_contract_fixtures -- --ignored
+```
 
-- `cargo test --lib` — unit tests only (CORS origin parsing); no database needed.
-- `cargo test` — everything, including the repository tests (`tests/repository/`) and the API end-to-end tests (`tests/api.rs`, requests through the real router in memory). These need:
-  1. `.env.test` — copy `.env.test.example`, point `TEST_DATABASE_URL` at a dedicated test database (the tests TRUNCATE every table) and keep the test-only JWT/admin/CORS values.
-  2. A migrated `m18_test` database:
+`worker-build --release` checks the Worker build itself.
 
-     ```sh
-     cd migration
-     cargo run -- up -u "postgresql://postgres:password@localhost:5432/m18_test"
-     ```
+## API
 
-  The DB tests share that database, so `.cargo/config.toml` sets `RUST_TEST_THREADS=1` (tests inside each binary run one at a time).
-- API contract fixtures — the JSON responses the Flutter apps consume (JWTs replaced by `<token>`, signed URLs by `<signed-url>`), written to `FIXTURES_OUT` (relative paths resolve from the repository root):
+| Route | Who |
+|---|---|
+| `GET /`, `GET /health` (`{status, version}`) | anyone |
+| `POST /api/auth/admin-login`, `/login` (tenant, by name), `/validate-token` | anyone |
+| `GET /api/files/{*key}` | anyone with a valid signed link (10 minutes) |
+| `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
+| `GET /api/signed-urls/receipts/{name}/{file}` | admin, or the tenant with that name |
+| `GET /api/signed-urls/payments/{name}` | any logged-in user |
+| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills` | admin |
 
-  ```powershell
-  $env:FIXTURES_OUT='C:\path\to\fixtures'; cargo test export_contract_fixtures -- --ignored
-  ```
+Errors are JSON `{"error": "..."}` (403 for a tenant token on an admin route, 409 for a conflict, 404 for a
+missing record). Bills come back as `{bill, additional_charges, reading}`.
 
-CI (`.github/workflows/test.yml`) runs the migrations, `cargo clippy --all-targets` and `cargo test` against a Postgres 18 service on every push and pull request to `main` and `update`.
+Receipts: `PUT /api/bills/{id}/upload` (multipart, at most 10 MiB) accepts JPEG, PNG, WebP, GIF, AVIF and PDF,
+checked by their bytes. The admin app converts photos to WebP before uploading. Signed-URL responses are
+`{url, content_type}`; the URL points at `/api/files/...` on this Worker, which streams the file from R2.
 
-## API Endpoints
+## CI/CD
 
-- `/api/auth` - Authentication routes (admin and tenant login, token validation)
-- `/api/rooms` - Room management (CRUD)
-- `/api/tenants` - Tenant management (CRUD)
-- `/api/electricity-readings` - Electricity readings (CRUD)
-- `/api/bills` - Bill management (CRUD, file upload)
-- `/api/signed-urls` - Generate signed URLs for receipts and payments
+- `test.yml`: pushes to `development` and PRs to `main` → fmt, clippy (native and wasm32), tests, `worker-build`.
+- `deploy.yml`: pushes to `main` → the same checks → the browser e2e suite (`shared-e2e`) with this commit and
+  the apps as they are live → `wrangler deploy` → waits for `/health` to report the commit → moves the `live` tag.
+- `migrate.yml`: production D1 migrations, manual, with approval.
 
-All routes except `/`, `/health` and `/api/auth` require JWT authentication.
+The workflows come from [whatever413y/.github](https://github.com/whatever413y/.github).

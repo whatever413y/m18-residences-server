@@ -1,0 +1,33 @@
+# main is production: every push is checked, run through the browser e2e suite against the apps that are live,
+# and only then deployed (https://api.m18-residences.workers.dev). Schema changes go through migrate.yml first.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: whatever413y/.github/.github/workflows/rust-worker-ci.yml@v1
+
+  e2e:
+    needs: ci
+    uses: whatever413y/shared-e2e/.github/workflows/m18-residences.yml@main
+    with:
+      server_ref: ${{ github.sha }}
+      admin_ref: live
+      tenant_ref: live
+      pinned: true
+
+  deploy:
+    needs: e2e
+    permissions:
+      contents: write
+    uses: whatever413y/.github/.github/workflows/workers-deploy-api.yml@v1
+    with:
+      health-url: https://api.m18-residences.workers.dev/health

@@ -1,0 +1,23 @@
+# The only way to change the production schema: lists or applies the pending D1 migrations
+# (crates/db/migrations). Runs in the production-db environment, so it waits for your approval.
+name: Migrate production database
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: list (show pending migrations) or apply
+        type: choice
+        options: [list, apply]
+        default: list
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    uses: whatever413y/.github/.github/workflows/d1-migrate.yml@v1
+    with:
+      database: m18-residences
+      command: ${{ inputs.command }}

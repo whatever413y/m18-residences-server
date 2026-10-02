@@ -38,13 +38,11 @@ mod tests {
     #[test]
     fn parses_a_list_of_origins() {
         assert_eq!(
-            parse_origins(
-                "http://localhost:50001, https://m18-residences-admin.example.workers.dev"
-            )
-            .unwrap(),
+            parse_origins("http://localhost:50001, https://admin.m18-residences.workers.dev")
+                .unwrap(),
             vec![
                 HeaderValue::from_static("http://localhost:50001"),
-                HeaderValue::from_static("https://m18-residences-admin.example.workers.dev")
+                HeaderValue::from_static("https://admin.m18-residences.workers.dev")
             ]
         );
     }

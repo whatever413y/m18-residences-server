@@ -1,7 +1,7 @@
 // The API Worker. Secrets (JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD) are set with
 // `wrangler secret put`; for `wrangler dev` they come from .dev.vars (see .dev.vars.example).
 {
-  "name": "m18-residences-api",
+  "name": "api",
   "main": "build/index.js",
   "compatibility_date": "2026-09-29",
   "build": { "command": "worker-build --release" },

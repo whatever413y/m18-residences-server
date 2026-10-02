@@ -5,6 +5,7 @@ pub mod auth;
 pub mod config;
 pub mod cors;
 pub mod error;
+pub mod extract;
 pub mod files;
 pub mod log;
 

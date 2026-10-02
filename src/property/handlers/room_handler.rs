@@ -5,8 +5,9 @@ use sea_orm::ActiveValue::Set;
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::property::handlers::{IdParam, ValidJson, ValidPath, require_name};
+use crate::property::handlers::{IdParam, require_name};
 use crate::property::services::room_service;
+use m18_residences_shared_rs::extract::{ValidJson, ValidPath};
 
 #[derive(Deserialize)]
 pub struct RoomInput {

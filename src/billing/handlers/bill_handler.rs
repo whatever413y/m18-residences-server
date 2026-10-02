@@ -3,25 +3,22 @@ use std::collections::HashMap;
 use axum::{
     Json,
     extract::{
-        Path, State,
+        State,
         multipart::{Multipart, MultipartError, MultipartRejection},
-        rejection::{JsonRejection, PathRejection},
     },
     http::StatusCode,
 };
 use m18_residences_shared_rs::{
     auth::{Admin, AuthUser},
     error::ApiError,
+    extract::{ValidJson, ValidPath},
 };
 use serde::Deserialize;
 
 use crate::{
     app::AppState,
-    billing::{
-        handlers::{json_error, path_error},
-        services::bill_service::{
-            self, AdditionalChargeInput, BillInput, BillWithChargesAndReading, ReceiptUpload,
-        },
+    billing::services::bill_service::{
+        self, AdditionalChargeInput, BillInput, BillWithChargesAndReading, ReceiptUpload,
     },
 };
 
@@ -76,9 +73,9 @@ pub async fn get_bills(
 pub async fn get_bill_by_tenant(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
-    path: Result<Path<TenantId>, PathRejection>,
+    path: ValidPath<TenantId>,
 ) -> Result<Json<BillWithChargesAndReading>, ApiError> {
-    let Path(TenantId { tenant_id }) = path.map_err(path_error)?;
+    let ValidPath(TenantId { tenant_id }) = path;
     claims.ensure_admin_or_tenant(tenant_id)?;
     bill_service::get_tenant_bill_with_details(&state.db, tenant_id)
         .await?
@@ -90,9 +87,9 @@ pub async fn get_bill_by_tenant(
 pub async fn get_bills_by_tenant(
     State(state): State<AppState>,
     AuthUser(claims): AuthUser,
-    path: Result<Path<TenantId>, PathRejection>,
+    path: ValidPath<TenantId>,
 ) -> Result<Json<Vec<BillWithChargesAndReading>>, ApiError> {
-    let Path(TenantId { tenant_id }) = path.map_err(path_error)?;
+    let ValidPath(TenantId { tenant_id }) = path;
     claims.ensure_admin_or_tenant(tenant_id)?;
     Ok(Json(
         bill_service::get_all_bills_for_tenant(&state.db, tenant_id).await?,
@@ -103,9 +100,9 @@ pub async fn get_bills_by_tenant(
 pub async fn create_bill_handler(
     State(state): State<AppState>,
     _admin: Admin,
-    body: Result<Json<BillPayload>, JsonRejection>,
+    body: ValidJson<BillPayload>,
 ) -> Result<(StatusCode, Json<BillWithChargesAndReading>), ApiError> {
-    let Json(payload) = body.map_err(json_error)?;
+    let ValidJson(payload) = body;
     let created = bill_service::create_bill(&state.db, payload.into_input()).await?;
     Ok((StatusCode::CREATED, Json(created)))
 }
@@ -114,11 +111,11 @@ pub async fn create_bill_handler(
 pub async fn update_bill_json_handler(
     State(state): State<AppState>,
     _admin: Admin,
-    path: Result<Path<BillId>, PathRejection>,
-    body: Result<Json<BillPayload>, JsonRejection>,
+    path: ValidPath<BillId>,
+    body: ValidJson<BillPayload>,
 ) -> Result<Json<BillWithChargesAndReading>, ApiError> {
-    let Path(BillId { id }) = path.map_err(path_error)?;
-    let Json(payload) = body.map_err(json_error)?;
+    let ValidPath(BillId { id }) = path;
+    let ValidJson(payload) = body;
     Ok(Json(
         bill_service::update_bill(&state.db, id, payload.into_input()).await?,
     ))
@@ -226,10 +223,10 @@ impl UploadForm {
 pub async fn update_bill_multipart_handler(
     State(state): State<AppState>,
     _admin: Admin,
-    path: Result<Path<BillId>, PathRejection>,
+    path: ValidPath<BillId>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<BillWithChargesAndReading>, ApiError> {
-    let Path(BillId { id }) = path.map_err(path_error)?;
+    let ValidPath(BillId { id }) = path;
     let multipart = multipart.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
     let (input, receipt) = UploadForm::read(multipart).await?.into_input()?;
     Ok(Json(
@@ -242,9 +239,9 @@ pub async fn update_bill_multipart_handler(
 pub async fn delete_bill(
     State(state): State<AppState>,
     _admin: Admin,
-    path: Result<Path<BillId>, PathRejection>,
+    path: ValidPath<BillId>,
 ) -> Result<StatusCode, ApiError> {
-    let Path(BillId { id }) = path.map_err(path_error)?;
+    let ValidPath(BillId { id }) = path;
     bill_service::delete_bill_with_charges(&state.db, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

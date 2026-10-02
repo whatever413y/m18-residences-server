@@ -1,23 +1,17 @@
 use axum::{
-    extract::{
-        Path, Query, State,
-        rejection::{PathRejection, QueryRejection},
-    },
+    extract::{Query, State, rejection::QueryRejection},
     http::{
         HeaderValue,
         header::{CACHE_CONTROL, CONTENT_TYPE, X_CONTENT_TYPE_OPTIONS},
     },
     response::{IntoResponse, Response},
 };
-use m18_residences_shared_rs::{error::ApiError, files::LINK_TTL_SECONDS};
+use m18_residences_shared_rs::{error::ApiError, extract::ValidPath, files::LINK_TTL_SECONDS};
 use serde::Deserialize;
 
 use crate::{
     app::AppState,
-    billing::{
-        handlers::path_error,
-        services::{file_service, signed_url_service::DEFAULT_CONTENT_TYPE},
-    },
+    billing::services::{file_service, signed_url_service::DEFAULT_CONTENT_TYPE},
 };
 
 #[derive(Deserialize)]
@@ -35,10 +29,10 @@ pub struct LinkQuery {
 /// GET /api/files/{*key}?expires=..&signature=.. (no token: the signed link is the permission)
 pub async fn get_file(
     State(state): State<AppState>,
-    path: Result<Path<FileKey>, PathRejection>,
+    path: ValidPath<FileKey>,
     query: Result<Query<LinkQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let Path(FileKey { key }) = path.map_err(path_error)?;
+    let ValidPath(FileKey { key }) = path;
     let (expires, signature) = match &query {
         Ok(Query(q)) => (
             q.expires.as_deref().and_then(|e| e.parse::<i64>().ok()),

@@ -5,8 +5,9 @@ use sea_orm::ActiveValue::Set;
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::property::handlers::{IdParam, ValidJson, ValidPath};
+use crate::property::handlers::IdParam;
 use crate::property::services::electricity_reading_service;
+use m18_residences_shared_rs::extract::{ValidJson, ValidPath};
 
 /// `consumption` is computed by the server; one sent here is ignored.
 #[derive(Deserialize)]

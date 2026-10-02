@@ -1,17 +1,14 @@
 use axum::{
     Json,
-    extract::{Path, State, rejection::PathRejection},
+    extract::State,
     http::{HeaderMap, Uri, header::HOST},
 };
-use m18_residences_shared_rs::{auth::AuthUser, error::ApiError};
+use m18_residences_shared_rs::{auth::AuthUser, error::ApiError, extract::ValidPath};
 use serde::Deserialize;
 
 use crate::{
     app::AppState,
-    billing::{
-        handlers::path_error,
-        services::signed_url_service::{self, SignedUrl, check_segment},
-    },
+    billing::services::signed_url_service::{self, SignedUrl, check_segment},
 };
 
 #[derive(Deserialize)]
@@ -45,12 +42,12 @@ pub async fn get_receipt_signed_url_handler(
     AuthUser(claims): AuthUser,
     uri: Uri,
     headers: HeaderMap,
-    path: Result<Path<ReceiptPath>, PathRejection>,
+    path: ValidPath<ReceiptPath>,
 ) -> Result<Json<SignedUrl>, ApiError> {
-    let Path(ReceiptPath {
+    let ValidPath(ReceiptPath {
         tenant_name,
         filename,
-    }) = path.map_err(path_error)?;
+    }) = path;
     check_segment("tenant_name", &tenant_name)?;
     check_segment("filename", &filename)?;
     claims.ensure_admin_or_name(&tenant_name)?;
@@ -73,9 +70,9 @@ pub async fn get_payment_signed_url_handler(
     _user: AuthUser,
     uri: Uri,
     headers: HeaderMap,
-    path: Result<Path<PaymentPath>, PathRejection>,
+    path: ValidPath<PaymentPath>,
 ) -> Result<Json<SignedUrl>, ApiError> {
-    let Path(PaymentPath { name }) = path.map_err(path_error)?;
+    let ValidPath(PaymentPath { name }) = path;
     check_segment("name", &name)?;
     let origin = request_origin(&uri, &headers)?;
     Ok(Json(

@@ -1,10 +1,14 @@
-use crate::entities::electricity_reading;
-use crate::services::electricity_reading_service;
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{Json, extract::State, http::StatusCode};
+use m18_residences_db::entities::electricity_reading;
+use m18_residences_shared_rs::{auth::Admin, error::ApiError};
 use sea_orm::ActiveValue::Set;
-use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
+use crate::app::AppState;
+use crate::property::handlers::{IdParam, ValidJson, ValidPath};
+use crate::property::services::electricity_reading_service;
+
+/// `consumption` is computed by the server; one sent here is ignored.
 #[derive(Deserialize)]
 pub struct ReadingInput {
     pub tenant_id: i32,
@@ -13,76 +17,68 @@ pub struct ReadingInput {
     pub curr_reading: i32,
 }
 
-/// GET /electricity-readings
+impl ReadingInput {
+    fn into_active_model(self) -> electricity_reading::ActiveModel {
+        electricity_reading::ActiveModel {
+            tenant_id: Set(self.tenant_id),
+            room_id: Set(self.room_id),
+            prev_reading: Set(self.prev_reading),
+            curr_reading: Set(self.curr_reading),
+            ..Default::default()
+        }
+    }
+}
+
+/// GET /electricity-readings (admin)
 pub async fn get_readings(
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<Vec<electricity_reading::Model>>, StatusCode> {
-    electricity_reading_service::get_all_readings(&db)
+    _admin: Admin,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<electricity_reading::Model>>, ApiError> {
+    electricity_reading_service::get_all_readings(&state.db)
         .await
         .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// GET /electricity-readings/{id}
+/// GET /electricity-readings/{id} (admin)
 pub async fn get_reading(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<(StatusCode, Json<electricity_reading::Model>), StatusCode> {
-    match electricity_reading_service::get_reading_by_id(&db, id).await {
-        Ok(Some(r)) => Ok((StatusCode::OK, Json(r))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-/// POST /electricity-readings
-pub async fn create_reading(
-    Extension(db): Extension<DatabaseConnection>,
-    Json(payload): Json<ReadingInput>,
-) -> Result<(StatusCode, Json<electricity_reading::Model>), StatusCode> {
-    let active_model = electricity_reading::ActiveModel {
-        tenant_id: Set(payload.tenant_id),
-        room_id: Set(payload.room_id),
-        prev_reading: Set(payload.prev_reading),
-        curr_reading: Set(payload.curr_reading),
-        ..Default::default()
-    };
-
-    electricity_reading_service::create_reading(&db, active_model)
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+) -> Result<Json<electricity_reading::Model>, ApiError> {
+    electricity_reading_service::get_reading_by_id(&state.db, id)
         .await
-        .map(|reading| (StatusCode::CREATED, Json(reading)))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map(Json)
 }
 
-/// PUT /electricity-readings/{id}
+/// POST /electricity-readings (admin)
+pub async fn create_reading(
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidJson(payload): ValidJson<ReadingInput>,
+) -> Result<(StatusCode, Json<electricity_reading::Model>), ApiError> {
+    let reading =
+        electricity_reading_service::create_reading(&state.db, payload.into_active_model()).await?;
+    Ok((StatusCode::CREATED, Json(reading)))
+}
+
+/// PUT /electricity-readings/{id} (admin): replaces all four fields, recomputes consumption.
 pub async fn update_reading(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-    Json(payload): Json<ReadingInput>,
-) -> Result<(StatusCode, Json<electricity_reading::Model>), StatusCode> {
-    let active_model = electricity_reading::ActiveModel {
-        id: Set(id),
-        tenant_id: Set(payload.tenant_id),
-        room_id: Set(payload.room_id),
-        prev_reading: Set(payload.prev_reading),
-        curr_reading: Set(payload.curr_reading),
-        ..Default::default()
-    };
-
-    match electricity_reading_service::update_reading(&db, id, active_model).await {
-        Ok(updated) => Ok((StatusCode::OK, Json(updated))),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+    ValidJson(payload): ValidJson<ReadingInput>,
+) -> Result<Json<electricity_reading::Model>, ApiError> {
+    electricity_reading_service::update_reading(&state.db, id, payload.into_active_model())
+        .await
+        .map(Json)
 }
 
-/// DELETE /electricity-readings/{id}
+/// DELETE /electricity-readings/{id} (admin)
 pub async fn delete_reading(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<StatusCode, StatusCode> {
-    match electricity_reading_service::delete_reading(&db, id).await {
-        Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+) -> Result<StatusCode, ApiError> {
+    electricity_reading_service::delete_reading(&state.db, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

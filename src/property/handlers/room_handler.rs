@@ -1,9 +1,12 @@
-use crate::entities::room;
-use crate::services::room_service;
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{Json, extract::State, http::StatusCode};
+use m18_residences_db::entities::room;
+use m18_residences_shared_rs::{auth::Admin, error::ApiError};
 use sea_orm::ActiveValue::Set;
-use sea_orm::DatabaseConnection;
 use serde::Deserialize;
+
+use crate::app::AppState;
+use crate::property::handlers::{IdParam, ValidJson, ValidPath, require_name};
+use crate::property::services::room_service;
 
 #[derive(Deserialize)]
 pub struct RoomInput {
@@ -11,72 +14,64 @@ pub struct RoomInput {
     pub rent: i32,
 }
 
-/// GET /rooms
+impl RoomInput {
+    fn into_active_model(self) -> Result<room::ActiveModel, ApiError> {
+        require_name(&self.name)?;
+        Ok(room::ActiveModel {
+            name: Set(self.name),
+            rent: Set(self.rent),
+            ..Default::default()
+        })
+    }
+}
+
+/// GET /rooms (admin)
 pub async fn get_rooms(
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<Vec<room::Model>>, StatusCode> {
-    let rooms = room_service::get_all_rooms(&db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(rooms))
+    _admin: Admin,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<room::Model>>, ApiError> {
+    room_service::get_all_rooms(&state.db).await.map(Json)
 }
 
-/// GET /rooms/{id}
+/// GET /rooms/{id} (admin)
 pub async fn get_room(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<(StatusCode, Json<room::Model>), StatusCode> {
-    match room_service::get_room_by_id(&db, id).await {
-        Ok(Some(r)) => Ok((StatusCode::OK, Json(r))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+) -> Result<Json<room::Model>, ApiError> {
+    room_service::get_room_by_id(&state.db, id).await.map(Json)
 }
 
-/// POST /rooms
+/// POST /rooms (admin)
 pub async fn create_room(
-    Extension(db): Extension<DatabaseConnection>,
-    Json(payload): Json<RoomInput>,
-) -> Result<(StatusCode, Json<room::Model>), StatusCode> {
-    let active_model = room::ActiveModel {
-        name: Set(payload.name),
-        rent: Set(payload.rent),
-        ..Default::default()
-    };
-
-    room_service::create_room(&db, active_model)
-        .await
-        .map(|room| (StatusCode::CREATED, Json(room)))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidJson(payload): ValidJson<RoomInput>,
+) -> Result<(StatusCode, Json<room::Model>), ApiError> {
+    let item = payload.into_active_model()?;
+    let room = room_service::create_room(&state.db, item).await?;
+    Ok((StatusCode::CREATED, Json(room)))
 }
 
-/// PUT /rooms/{id}
+/// PUT /rooms/{id} (admin): replaces name and rent.
 pub async fn update_room(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-    Json(payload): Json<RoomInput>,
-) -> Result<(StatusCode, Json<room::Model>), StatusCode> {
-    let active_model = room::ActiveModel {
-        id: Set(id),
-        name: Set(payload.name),
-        rent: Set(payload.rent),
-        ..Default::default()
-    };
-
-    match room_service::update_room(&db, id, active_model).await {
-        Ok(updated) => Ok((StatusCode::OK, Json(updated))),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+    ValidJson(payload): ValidJson<RoomInput>,
+) -> Result<Json<room::Model>, ApiError> {
+    let item = payload.into_active_model()?;
+    room_service::update_room(&state.db, id, item)
+        .await
+        .map(Json)
 }
 
-/// DELETE /rooms/{id}
+/// DELETE /rooms/{id} (admin)
 pub async fn delete_room(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<StatusCode, StatusCode> {
-    match room_service::delete_room(&db, id).await {
-        Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+) -> Result<StatusCode, ApiError> {
+    room_service::delete_room(&state.db, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -1,55 +1,93 @@
-use crate::entities::room;
-use crate::repository::room_repo;
-use sea_orm::{DatabaseConnection, DbErr};
+use m18_residences_db::{Db, entities::room};
+use m18_residences_shared_rs::{error::ApiError, log_ok};
+use sea_orm::DbErr;
 
-/// Get all rooms
-pub async fn get_all_rooms(db: &DatabaseConnection) -> Result<Vec<room::Model>, DbErr> {
-    let result = room_repo::get_all(db).await;
-    match &result {
-        Ok(list) => println!("✅ get_all_rooms: fetched {} rooms", list.len()),
-        Err(err) => eprintln!("❌ get_all_rooms: error fetching rooms: {:?}", err),
-    }
-    result
+use crate::property::repository::room_repo;
+use crate::property::services::{Violation, violation};
+
+fn not_found(id: i32) -> ApiError {
+    ApiError::NotFound(format!("Room {id} not found"))
 }
 
-/// Get room by ID 
-pub async fn get_room_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<room::Model>, DbErr> {
-    let result = room_repo::get_by_id(db, id).await;
-    match &result {
-        Ok(Some(r)) => println!("✅ get_room_by_id: found room id={} name={}", r.id, r.name),
-        Ok(None) => println!("⚠️ get_room_by_id: room id={} not found", id),
-        Err(err) => eprintln!("❌ get_room_by_id: error fetching room id={}: {:?}", id, err),
+/// A failed insert/update: a taken name is a 409 that says so; the rest by the default mapping.
+fn write_error(err: DbErr, item: &room::ActiveModel) -> ApiError {
+    match (violation(&err), item.name.try_as_ref()) {
+        (Some(Violation::Unique), Some(name)) => {
+            ApiError::Conflict(format!("A room named \"{name}\" already exists"))
+        }
+        _ => err.into(),
     }
-    result
 }
 
-/// Create room 
-pub async fn create_room(db: &DatabaseConnection, item: room::ActiveModel) -> Result<room::Model, DbErr> {
-    let result = room_repo::create(db, item).await;
-    match &result {
-        Ok(r) => println!("✅ create_room: created room id={} name={}", r.id, r.name),
-        Err(err) => eprintln!("❌ create_room: error creating room: {:?}", err),
-    }
-    result
+/// Get all rooms, by name.
+pub async fn get_all_rooms(db: &Db) -> Result<Vec<room::Model>, ApiError> {
+    let rooms = room_repo::get_all(db.conn()).await?;
+    log_ok!("get_all_rooms: fetched {} rooms", rooms.len());
+    Ok(rooms)
 }
 
-/// Update room 
-pub async fn update_room(db: &DatabaseConnection, id: i32, item: room::ActiveModel) -> Result<room::Model, DbErr> {
-    let result = room_repo::update(db, id, item).await;
-    match &result {
-        Ok(r) => println!("✅ update_room: updated room id={} name={}", r.id, r.name),
-        Err(err) => eprintln!("❌ update_room: error updating room id={}: {:?}", id, err),
-    }
-    result
+/// Get room by ID (404 if missing).
+pub async fn get_room_by_id(db: &Db, id: i32) -> Result<room::Model, ApiError> {
+    let room = room_repo::get_by_id(db.conn(), id)
+        .await?
+        .ok_or_else(|| not_found(id))?;
+    log_ok!(
+        "get_room_by_id: found room id={} name={}",
+        room.id,
+        room.name
+    );
+    Ok(room)
 }
 
-/// Delete room 
-pub async fn delete_room(db: &DatabaseConnection, id: i32) -> Result<Option<room::Model>, DbErr> {
-    let result = room_repo::delete(db, id).await;
-    match &result {
-        Ok(Some(r)) => println!("✅ delete_room: deleted room id={} name={}", r.id, r.name),
-        Ok(None) => println!("⚠️ delete_room: room id={} not found", id),
-        Err(err) => eprintln!("❌ delete_room: error deleting room id={}: {:?}", id, err),
-    }
-    result
+/// Create room (409 if the name is taken).
+pub async fn create_room(db: &Db, item: room::ActiveModel) -> Result<room::Model, ApiError> {
+    let room = room_repo::create(db.conn(), item.clone())
+        .await
+        .map_err(|err| write_error(err, &item))?;
+    log_ok!(
+        "create_room: created room id={} name={}",
+        room.id,
+        room.name
+    );
+    Ok(room)
+}
+
+/// Update room's name and rent (404 if missing, 409 if the name is taken).
+/// `updated_at` is left as is.
+pub async fn update_room(
+    db: &Db,
+    id: i32,
+    item: room::ActiveModel,
+) -> Result<room::Model, ApiError> {
+    let room = room_repo::update(db.conn(), id, item.clone())
+        .await
+        .map_err(|err| match err {
+            DbErr::RecordNotUpdated => not_found(id),
+            err => write_error(err, &item),
+        })?;
+    log_ok!(
+        "update_room: updated room id={} name={}",
+        room.id,
+        room.name
+    );
+    Ok(room)
+}
+
+/// Delete room (404 if missing, 409 while tenants or readings refer to it).
+pub async fn delete_room(db: &Db, id: i32) -> Result<room::Model, ApiError> {
+    let room = room_repo::delete(db.conn(), id)
+        .await
+        .map_err(|err| match violation(&err) {
+            Some(Violation::ForeignKey) => {
+                ApiError::Conflict(format!("Room {id} still has tenants or readings"))
+            }
+            _ => err.into(),
+        })?
+        .ok_or_else(|| not_found(id))?;
+    log_ok!(
+        "delete_room: deleted room id={} name={}",
+        room.id,
+        room.name
+    );
+    Ok(room)
 }

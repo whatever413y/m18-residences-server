@@ -1,87 +1,118 @@
-use crate::entities::electricity_reading;
-use crate::repository::electricity_reading_repo;
-use sea_orm::{ActiveValue::Set, DatabaseConnection, DbErr};
+use m18_residences_db::{Db, entities::electricity_reading};
+use m18_residences_shared_rs::{error::ApiError, log_ok};
+use sea_orm::{ActiveValue::Set, DbErr};
 
-fn value_or_zero(v: sea_orm::ActiveValue<i32>) -> i32 {
-    if let sea_orm::ActiveValue::Set(x) = v { x } else { 0 }
+use crate::property::repository::{electricity_reading_repo, room_repo, tenant_repo};
+use crate::property::services::{Violation, violation};
+
+fn not_found(id: i32) -> ApiError {
+    ApiError::NotFound(format!("Reading {id} not found"))
 }
 
-pub fn calculate_consumption(prev: sea_orm::ActiveValue<i32>, curr: sea_orm::ActiveValue<i32>) -> i32 {
-    value_or_zero(curr) - value_or_zero(prev)
+/// consumption = curr - prev (negative when the meter went down, as before; 400 if it overflows).
+pub fn calculate_consumption(prev: i32, curr: i32) -> Result<i32, ApiError> {
+    curr.checked_sub(prev)
+        .ok_or_else(|| ApiError::BadRequest("curr_reading - prev_reading is out of range".into()))
 }
 
-/// GET all readings
-pub async fn get_all_readings(db: &DatabaseConnection) -> Result<Vec<electricity_reading::Model>, DbErr> {
-    let result = electricity_reading_repo::get_all(db).await;
-    if let Ok(list) = &result {
-        println!("✅ get_all_readings: fetched {} readings", list.len());
-    } else if let Err(err) = &result {
-        eprintln!("❌ get_all_readings: error: {:?}", err);
+/// Sets `consumption` from the `prev_reading` and `curr_reading` the handler set.
+fn with_consumption(
+    mut item: electricity_reading::ActiveModel,
+) -> Result<electricity_reading::ActiveModel, ApiError> {
+    let (Some(&prev), Some(&curr)) = (
+        item.prev_reading.try_as_ref(),
+        item.curr_reading.try_as_ref(),
+    ) else {
+        return Err(ApiError::Internal(
+            "reading without prev_reading or curr_reading".into(),
+        ));
+    };
+    item.consumption = Set(calculate_consumption(prev, curr)?);
+    Ok(item)
+}
+
+/// A failed insert/update: a missing tenant or room is a 409 naming it; the
+/// rest by the default mapping.
+async fn write_error(db: &Db, err: DbErr, item: &electricity_reading::ActiveModel) -> ApiError {
+    if violation(&err) != Some(Violation::ForeignKey) {
+        return err.into();
     }
-    result
-}
-
-/// GET reading by ID
-pub async fn get_reading_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<electricity_reading::Model>, DbErr> {
-    let result = electricity_reading_repo::get_by_id(db, id).await;
-    match &result {
-        Ok(Some(r)) => println!("✅ get_reading_by_id: found id={}", r.id),
-        Ok(None) => println!("⚠️ get_reading_by_id: id={} not found", id),
-        Err(err) => eprintln!("❌ get_reading_by_id: error id={}: {:?}", id, err),
+    if let Some(&tenant_id) = item.tenant_id.try_as_ref() {
+        match tenant_repo::get_by_id(db.conn(), tenant_id).await {
+            Ok(None) => return ApiError::Conflict(format!("Tenant {tenant_id} does not exist")),
+            Ok(Some(_)) => {}
+            Err(lookup) => return lookup.into(),
+        }
     }
-    result
+    if let Some(&room_id) = item.room_id.try_as_ref() {
+        match room_repo::get_by_id(db.conn(), room_id).await {
+            Ok(None) => return ApiError::Conflict(format!("Room {room_id} does not exist")),
+            Ok(Some(_)) => {}
+            Err(lookup) => return lookup.into(),
+        }
+    }
+    err.into()
 }
 
-/// CREATE reading
+/// GET all readings, newest first.
+pub async fn get_all_readings(db: &Db) -> Result<Vec<electricity_reading::Model>, ApiError> {
+    let readings = electricity_reading_repo::get_all(db.conn()).await?;
+    log_ok!("get_all_readings: fetched {} readings", readings.len());
+    Ok(readings)
+}
+
+/// GET reading by ID (404 if missing).
+pub async fn get_reading_by_id(db: &Db, id: i32) -> Result<electricity_reading::Model, ApiError> {
+    let reading = electricity_reading_repo::get_by_id(db.conn(), id)
+        .await?
+        .ok_or_else(|| not_found(id))?;
+    log_ok!("get_reading_by_id: found id={}", reading.id);
+    Ok(reading)
+}
+
+/// CREATE reading with the computed consumption (409 if the tenant or room doesn't exist).
 pub async fn create_reading(
-    db: &DatabaseConnection,
-    mut item: electricity_reading::ActiveModel,
-) -> Result<electricity_reading::Model, DbErr> {
-    item.consumption = Set(calculate_consumption(item.prev_reading.clone(), item.curr_reading.clone()));
-
-    let result = electricity_reading_repo::create(db, item).await;
-
-    if let Ok(ref r) = result {
-        println!("✅ create_reading: created id={}", r.id);
-    } else if let Err(err) = &result {
-        eprintln!("❌ create_reading: error: {:?}", err);
-    }
-
-    result
+    db: &Db,
+    item: electricity_reading::ActiveModel,
+) -> Result<electricity_reading::Model, ApiError> {
+    let item = with_consumption(item)?;
+    let reading = match electricity_reading_repo::create(db.conn(), item.clone()).await {
+        Ok(reading) => reading,
+        Err(err) => return Err(write_error(db, err, &item).await),
+    };
+    log_ok!("create_reading: created id={}", reading.id);
+    Ok(reading)
 }
 
-/// UPDATE reading
+/// UPDATE reading, recomputing consumption (404 if missing, 409 as for create).
+/// `updated_at` is left as is, and a bill of this reading is not touched.
 pub async fn update_reading(
-    db: &DatabaseConnection,
+    db: &Db,
     id: i32,
     mut item: electricity_reading::ActiveModel,
-) -> Result<electricity_reading::Model, DbErr> {
+) -> Result<electricity_reading::Model, ApiError> {
     item.id = Set(id);
-    item.consumption = Set(calculate_consumption(item.prev_reading.clone(), item.curr_reading.clone()));
-
-    let result = electricity_reading_repo::update(db, item).await;
-
-    if let Ok(ref r) = result {
-        println!("✅ update_reading: updated id={}", r.id);
-    } else if let Err(err) = &result {
-        eprintln!("❌ update_reading: error id={}: {:?}", id, err);
-    }
-
-    result
+    let item = with_consumption(item)?;
+    let reading = match electricity_reading_repo::update(db.conn(), item.clone()).await {
+        Ok(reading) => reading,
+        Err(DbErr::RecordNotUpdated) => return Err(not_found(id)),
+        Err(err) => return Err(write_error(db, err, &item).await),
+    };
+    log_ok!("update_reading: updated id={}", reading.id);
+    Ok(reading)
 }
 
-/// DELETE reading
-pub async fn delete_reading(
-    db: &DatabaseConnection,
-    id: i32,
-) -> Result<Option<electricity_reading::Model>, DbErr> {
-    let result = electricity_reading_repo::delete(db, id).await;
-
-    match &result {
-        Ok(Some(r)) => println!("✅ delete_reading: deleted id={}", r.id),
-        Ok(None) => println!("⚠️ delete_reading: id={} not found", id),
-        Err(err) => eprintln!("❌ delete_reading: error id={}: {:?}", id, err),
-    }
-
-    result
+/// DELETE reading (404 if missing, 409 while a bill refers to it).
+pub async fn delete_reading(db: &Db, id: i32) -> Result<electricity_reading::Model, ApiError> {
+    let reading = electricity_reading_repo::delete(db.conn(), id)
+        .await
+        .map_err(|err| match violation(&err) {
+            Some(Violation::ForeignKey) => {
+                ApiError::Conflict(format!("Reading {id} still has a bill"))
+            }
+            _ => err.into(),
+        })?
+        .ok_or_else(|| not_found(id))?;
+    log_ok!("delete_reading: deleted id={}", reading.id);
+    Ok(reading)
 }

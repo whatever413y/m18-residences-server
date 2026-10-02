@@ -1,95 +1,111 @@
-use crate::repository::tenant_repo;
-use crate::entities::tenant;
-use sea_orm::{DatabaseConnection, DbErr};
+use m18_residences_db::{Db, entities::tenant};
+use m18_residences_shared_rs::{error::ApiError, log_ok};
+use sea_orm::DbErr;
 
+use crate::property::repository::tenant_repo;
+use crate::property::services::{Violation, violation};
 
-/// Get all tenants
-pub async fn get_all_tenants(db: &DatabaseConnection) -> Result<Vec<tenant::Model>, DbErr> {
-    let result = tenant_repo::get_all(db).await;
-
-    if let Ok(list) = &result {
-        println!("✅ get_all_tenants: fetched {} tenants", list.len());
-    } else if let Err(err) = &result {
-        eprintln!("❌ get_all_tenants: error fetching tenants: {:?}", err);
-    }
-
-    result
+fn not_found(id: i32) -> ApiError {
+    ApiError::NotFound(format!("Tenant {id} not found"))
 }
 
-/// Get tenant by ID 
-pub async fn get_tenant_by_id(db: &DatabaseConnection, id: i32) -> Result<Option<tenant::Model>, DbErr> {
-    let result = tenant_repo::get_by_id(db, id).await;
-
-    match &result {
-        Ok(Some(t)) => println!("✅ get_tenant_by_id: found tenant id={} name={}", t.id, t.name),
-        Ok(None) => println!("⚠️ get_tenant_by_id: tenant id={} not found", id),
-        Err(err) => eprintln!("❌ get_tenant_by_id: error fetching tenant id={}: {:?}", id, err),
+/// A failed insert/update: a taken name or a missing room is a 409 that says
+/// so; the rest by the default mapping.
+fn write_error(err: DbErr, item: &tenant::ActiveModel) -> ApiError {
+    match violation(&err) {
+        Some(Violation::Unique) => match item.name.try_as_ref() {
+            Some(name) => ApiError::Conflict(format!("A tenant named \"{name}\" already exists")),
+            None => err.into(),
+        },
+        Some(Violation::ForeignKey) => match item.room_id.try_as_ref() {
+            Some(room_id) => ApiError::Conflict(format!("Room {room_id} does not exist")),
+            None => err.into(),
+        },
+        None => err.into(),
     }
-
-    result
 }
 
-/// Get tenant by name 
-pub async fn get_tenant_by_name(
-    db: &DatabaseConnection,
-    name: &str,
-) -> Result<Option<tenant::Model>, DbErr> {
-    let result = tenant_repo::get_by_name(db, name).await;
-
-    match &result {
-        Ok(Some(t)) => println!("✅ get_tenant_by_name: found tenant id={} name={}", t.id, t.name),
-        Ok(None) => println!("⚠️ get_tenant_by_name: tenant with name '{}' not found", name),
-        Err(err) => eprintln!("❌ get_tenant_by_name: error fetching tenant by name '{}': {:?}", name, err),
-    }
-
-    result
+/// Get all tenants (active or not), by name.
+pub async fn get_all_tenants(db: &Db) -> Result<Vec<tenant::Model>, ApiError> {
+    let tenants = tenant_repo::get_all(db.conn()).await?;
+    log_ok!("get_all_tenants: fetched {} tenants", tenants.len());
+    Ok(tenants)
 }
 
-/// Create tenant 
-pub async fn create_tenant(
-    db: &DatabaseConnection,
-    item: tenant::ActiveModel,
-) -> Result<tenant::Model, DbErr> {
-    let result = tenant_repo::create(db, item).await;
-
-    if let Ok(ref t) = result {
-        println!("✅ create_tenant: created id={} name={}", t.id, t.name);
-    } else if let Err(ref err) = result {
-        eprintln!("❌ create_tenant: error creating tenant: {:?}", err);
-    }
-
-    result
+/// Get tenant by ID (404 if missing).
+pub async fn get_tenant_by_id(db: &Db, id: i32) -> Result<tenant::Model, ApiError> {
+    let tenant = tenant_repo::get_by_id(db.conn(), id)
+        .await?
+        .ok_or_else(|| not_found(id))?;
+    log_ok!(
+        "get_tenant_by_id: found tenant id={} name={}",
+        tenant.id,
+        tenant.name
+    );
+    Ok(tenant)
 }
 
+/// Get tenant by exact name (404 if none).
+pub async fn get_tenant_by_name(db: &Db, name: &str) -> Result<tenant::Model, ApiError> {
+    let tenant = tenant_repo::get_by_name(db.conn(), name)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Tenant \"{name}\" not found")))?;
+    log_ok!(
+        "get_tenant_by_name: found tenant id={} name={}",
+        tenant.id,
+        tenant.name
+    );
+    Ok(tenant)
+}
 
-/// Update tenant 
+/// Create tenant (409 if the name is taken or the room doesn't exist).
+pub async fn create_tenant(db: &Db, item: tenant::ActiveModel) -> Result<tenant::Model, ApiError> {
+    let tenant = tenant_repo::create(db.conn(), item.clone())
+        .await
+        .map_err(|err| write_error(err, &item))?;
+    log_ok!(
+        "create_tenant: created id={} name={}",
+        tenant.id,
+        tenant.name
+    );
+    Ok(tenant)
+}
+
+/// Update tenant (404 if missing, 409 as for create). `updated_at` is left as is.
 pub async fn update_tenant(
-    db: &DatabaseConnection,
+    db: &Db,
     id: i32,
     item: tenant::ActiveModel,
-) -> Result<tenant::Model, DbErr> {
-    let result = tenant_repo::update(db, id, item).await;
-    if let Ok(t) = &result {
-        println!("✅ update_tenant: updated tenant id={} name={}", t.id, t.name);
-    } else if let Err(err) = &result {
-        eprintln!("❌ update_tenant: error updating tenant id={}: {:?}", id, err);
-    }
-
-    result
+) -> Result<tenant::Model, ApiError> {
+    let tenant = tenant_repo::update(db.conn(), id, item.clone())
+        .await
+        .map_err(|err| match err {
+            DbErr::RecordNotUpdated => not_found(id),
+            err => write_error(err, &item),
+        })?;
+    log_ok!(
+        "update_tenant: updated tenant id={} name={}",
+        tenant.id,
+        tenant.name
+    );
+    Ok(tenant)
 }
 
-/// Delete tenant 
-pub async fn delete_tenant(
-    db: &DatabaseConnection,
-    id: i32,
-) -> Result<Option<tenant::Model>, DbErr> {
-    let result = tenant_repo::delete(db, id).await;
-
-    match &result {
-        Ok(Some(t)) => println!("✅ delete_tenant: deleted tenant id={} name={}", t.id, t.name),
-        Ok(None) => println!("⚠️ delete_tenant: tenant id={} not found", id),
-        Err(err) => eprintln!("❌ delete_tenant: error deleting tenant id={}: {:?}", id, err),
-    }
-
-    result
+/// Delete tenant (404 if missing, 409 while readings or bills refer to it).
+pub async fn delete_tenant(db: &Db, id: i32) -> Result<tenant::Model, ApiError> {
+    let tenant = tenant_repo::delete(db.conn(), id)
+        .await
+        .map_err(|err| match violation(&err) {
+            Some(Violation::ForeignKey) => {
+                ApiError::Conflict(format!("Tenant {id} still has readings or bills"))
+            }
+            _ => err.into(),
+        })?
+        .ok_or_else(|| not_found(id))?;
+    log_ok!(
+        "delete_tenant: deleted tenant id={} name={}",
+        tenant.id,
+        tenant.name
+    );
+    Ok(tenant)
 }

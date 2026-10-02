@@ -1,101 +1,106 @@
-use crate::entities::tenant;
-use crate::services::tenant_service;
-use axum::{Extension, Json, extract::Path, http::StatusCode};
+use axum::{Json, extract::State, http::StatusCode};
 use chrono::NaiveDateTime;
+use m18_residences_db::entities::tenant;
+use m18_residences_shared_rs::{
+    auth::{Admin, AuthUser},
+    error::ApiError,
+};
 use sea_orm::ActiveValue::Set;
-use sea_orm::DatabaseConnection;
 use serde::Deserialize;
+
+use crate::app::AppState;
+use crate::property::handlers::{IdParam, ValidJson, ValidPath, require_name};
+use crate::property::services::tenant_service;
 
 #[derive(Deserialize)]
 pub struct TenantInput {
     pub name: String,
     pub room_id: i32,
+    /// `YYYY-MM-DDTHH:MM:SS[.f]`, no zone.
     pub join_date: NaiveDateTime,
+    /// Missing or null means active (on update too).
     pub is_active: Option<bool>,
 }
 
-/// GET /tenants
+impl TenantInput {
+    fn into_active_model(self) -> Result<tenant::ActiveModel, ApiError> {
+        require_name(&self.name)?;
+        Ok(tenant::ActiveModel {
+            name: Set(self.name),
+            room_id: Set(self.room_id),
+            join_date: Set(self.join_date),
+            is_active: Set(self.is_active.unwrap_or(true)),
+            ..Default::default()
+        })
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NameParam {
+    pub name: String,
+}
+
+/// GET /tenants (admin)
 pub async fn get_tenants(
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<Json<Vec<tenant::Model>>, StatusCode> {
-    let tenants = tenant_service::get_all_tenants(&db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(tenants))
+    _admin: Admin,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<tenant::Model>>, ApiError> {
+    tenant_service::get_all_tenants(&state.db).await.map(Json)
 }
 
-/// GET /tenants/{id}
+/// GET /tenants/{id} (admin, or that tenant)
 pub async fn get_tenant(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
-    match tenant_service::get_tenant_by_id(&db, id).await {
-        Ok(Some(t)) => Ok((StatusCode::OK, Json(t))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-/// GET /tenants/tenant/{name}
-pub async fn get_tenant_by_name(
-    Path(name): Path<String>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
-    match tenant_service::get_tenant_by_name(&db, &name).await {
-        Ok(Some(t)) => Ok((StatusCode::OK, Json(t))),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-
-/// POST /tenants
-pub async fn create_tenant(
-    Extension(db): Extension<DatabaseConnection>,
-    Json(payload): Json<TenantInput>,
-) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
-    let active_model = tenant::ActiveModel {
-        name: Set(payload.name),
-        room_id: Set(payload.room_id),
-        join_date: Set(payload.join_date),
-        is_active: Set(payload.is_active.unwrap_or(true)),
-        ..Default::default()
-    };
-
-    tenant_service::create_tenant(&db, active_model)
+    AuthUser(claims): AuthUser,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+) -> Result<Json<tenant::Model>, ApiError> {
+    claims.ensure_admin_or_tenant(id)?;
+    tenant_service::get_tenant_by_id(&state.db, id)
         .await
-        .map(|tenant| (StatusCode::CREATED, Json(tenant)))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map(Json)
 }
 
-/// PUT /tenants/{id}
+/// GET /tenants/tenant/{name} (admin): exact name match.
+pub async fn get_tenant_by_name(
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(NameParam { name }): ValidPath<NameParam>,
+) -> Result<Json<tenant::Model>, ApiError> {
+    tenant_service::get_tenant_by_name(&state.db, &name)
+        .await
+        .map(Json)
+}
+
+/// POST /tenants (admin)
+pub async fn create_tenant(
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidJson(payload): ValidJson<TenantInput>,
+) -> Result<(StatusCode, Json<tenant::Model>), ApiError> {
+    let item = payload.into_active_model()?;
+    let tenant = tenant_service::create_tenant(&state.db, item).await?;
+    Ok((StatusCode::CREATED, Json(tenant)))
+}
+
+/// PUT /tenants/{id} (admin): replaces name, room, join date and active flag.
 pub async fn update_tenant(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-    Json(payload): Json<TenantInput>,
-) -> Result<(StatusCode, Json<tenant::Model>), StatusCode> {
-    let active_model = tenant::ActiveModel {
-        id: Set(id),
-        name: Set(payload.name),
-        room_id: Set(payload.room_id),
-        join_date: Set(payload.join_date),
-        is_active: Set(payload.is_active.unwrap_or(true)),
-        ..Default::default()
-    };
-
-    match tenant_service::update_tenant(&db, id, active_model).await {
-        Ok(updated) => Ok((StatusCode::OK, Json(updated))),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+    ValidJson(payload): ValidJson<TenantInput>,
+) -> Result<Json<tenant::Model>, ApiError> {
+    let item = payload.into_active_model()?;
+    tenant_service::update_tenant(&state.db, id, item)
+        .await
+        .map(Json)
 }
 
-/// DELETE /tenants/{id}
+/// DELETE /tenants/{id} (admin)
 pub async fn delete_tenant(
-    Path(id): Path<i32>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> Result<StatusCode, StatusCode> {
-    match tenant_service::delete_tenant(&db, id).await {
-        Ok(Some(_)) => Ok(StatusCode::NO_CONTENT),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    _admin: Admin,
+    State(state): State<AppState>,
+    ValidPath(IdParam { id }): ValidPath<IdParam>,
+) -> Result<StatusCode, ApiError> {
+    tenant_service::delete_tenant(&state.db, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

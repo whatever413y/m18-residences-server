@@ -1,22 +1,21 @@
 //! SeaORM on Cloudflare D1. SeaORM has no D1 driver, so this implements its
 //! `proxy` connection: SeaORM hands over SQL + values, D1 runs them, and the
-//! untyped JSON rows are rebuilt into typed values with [`column_kinds`].
+//! untyped rows are rebuilt into typed values with [`column_kinds`].
 //!
 //! Through the proxy, SeaORM reads a value of the wrong type in an `Option`
 //! field as `None` without an error, so the rebuild must be exact; unknown
 //! columns (aliases, aggregates) fall back to the JSON type.
-use std::{collections::BTreeMap, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use sea_orm::{
     Database, DbBackend, DbErr, ProxyDatabaseTrait, ProxyExecResult, ProxyRow, RuntimeErr,
     Statement, Value,
 };
-use serde_json::{Map, Value as Json};
 use worker::{D1Database, D1PreparedStatement, send::SendFuture, wasm_bindgen::JsValue};
 
 use crate::{
     Atomic, Db,
-    rows::{format_timestamp, inferred, typed, unaliased},
+    rows::{ObjectRow, format_timestamp, typed_object_rows},
     schema::{ColumnKind, column_kinds},
 };
 
@@ -49,24 +48,6 @@ impl D1 {
         let values = values.0.iter().map(to_js).collect::<Result<Vec<_>, _>>()?;
         prepared.bind(&values).map_err(d1_err)
     }
-
-    fn row(&self, columns: Map<String, Json>) -> Result<ProxyRow, DbErr> {
-        let mut values = BTreeMap::new();
-        for (name, json) in columns {
-            let kind = self
-                .kinds
-                .get(name.as_str())
-                .or_else(|| unaliased(&name).and_then(|n| self.kinds.get(n)));
-            let value = match kind {
-                Some(kind) => {
-                    typed(*kind, &json).map_err(|e| DbErr::Type(format!("column `{name}`: {e}")))?
-                }
-                None => inferred(&json),
-            };
-            values.insert(name, value);
-        }
-        Ok(ProxyRow::new(values))
-    }
 }
 
 #[async_trait::async_trait]
@@ -90,11 +71,16 @@ struct Proxy(Arc<D1>);
 impl ProxyDatabaseTrait for Proxy {
     async fn query(&self, statement: Statement) -> Result<Vec<ProxyRow>, DbErr> {
         let prepared = self.0.prepare(&statement)?;
+        // Rows are deserialized field by field into ordered lists (no map per row), and each column's kind is looked
+        // up once per query; timestamps use a hand-written parser. Most of the CPU is D1 building the row objects and
+        // their conversion into wasm; JSON.stringify + TextEncoder + serde_json and D1's raw() were measured on the
+        // dev Worker and were not better overall (server README, "Performance").
         let result = SendFuture::new(async move { prepared.all().await })
             .await
             .map_err(d1_err)?;
-        let rows: Vec<Map<String, Json>> = result.results().map_err(d1_err)?;
-        rows.into_iter().map(|row| self.0.row(row)).collect()
+        let rows: Vec<ObjectRow> = result.results().map_err(d1_err)?;
+        let rows = typed_object_rows(rows, &self.0.kinds).map_err(DbErr::Type)?;
+        Ok(rows.into_iter().map(ProxyRow::new).collect())
     }
 
     async fn execute(&self, statement: Statement) -> Result<ProxyExecResult, DbErr> {

@@ -58,6 +58,24 @@ D1 (SQLite). The schema is `crates/db/migrations/*.sql`, mirrored by `crates/db/
 D1 has no interactive transactions: writes that must happen together go through `db.atomic(statements)`, one
 D1 batch.
 
+## Performance
+
+The Workers Free plan allows 10 ms CPU per request, but doesn't enforce it strictly. Measured on 2026-10-05 on the
+dev Worker with `wrangler tail`, `GET /api/bills` (every bill with its reading and charges), median CPU:
+
+| Bills | CPU |
+|---|---|
+| 115 (production today) | 7 ms |
+| 500 | 23 ms |
+| 1,150 | 47–53 ms (a few requests cut off with error 1102) |
+
+The cost grows with the number of rows. Most of it is D1 building the row objects and their conversion into wasm,
+not our code. The D1 adapter (`crates/db/src/d1.rs`) reads rows without per-row maps, looks up column types once per
+query and parses timestamps by hand. Two alternatives were measured and not adopted: `JSON.stringify` +
+`TextEncoder` + serde_json (faster at 1,150 bills, slower at 500), and D1's `raw()` (more CPU inside D1's own
+JavaScript). The lever left is to load fewer rows per request (paging, or one year at a time in the admin billing
+page).
+
 ## Tests
 
 ```sh

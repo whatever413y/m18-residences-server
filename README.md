@@ -96,8 +96,9 @@ checked by their bytes. The admin app converts photos to WebP before uploading. 
 
 The `development` branch runs as its own Worker, **`development-api`** (https://development-api.m18-residences.workers.dev),
 from `env.development` in `wrangler.jsonc`: its own D1 and R2 (`m18-residences-dev`, synthetic data from
-[`tools/dev-seed`](tools/dev-seed/README.md)), its own secrets (`wrangler secret put <NAME> --env development`; the
-values are in the infra `.env` as `DEV_*`), and CORS for the apps' preview links (`https://*-admin…`, `https://*-my…`,
+[`tools/dev-seed`](tools/dev-seed/README.md)), its own secrets (`wrangler secret put <NAME> --env development`: the
+same admin login as production, `ADMIN_USERNAME`/`ADMIN_PASSWORD` in the infra `.env`, and its own random
+`JWT_SECRET`, which lives only in Cloudflare), and CORS for the apps' preview links (`https://*-admin…`, `https://*-my…`,
 a `*` standing for one DNS label). The production Worker has `preview_urls: false`: a preview link would use the
 production data.
 

@@ -18,7 +18,7 @@ jobs:
 
   migrate:
     needs: ci
-    uses: whatever413y/.github/.github/workflows/d1-migrate.yml@development
+    uses: whatever413y/.github/.github/workflows/d1-migrate.yml@v1
     # Cross-repo reusable workflows only see the caller's (environment) secrets when they are passed on.
     secrets: inherit
     with:
@@ -29,7 +29,7 @@ jobs:
 
   deploy:
     needs: migrate
-    uses: whatever413y/.github/.github/workflows/workers-deploy-api.yml@development
+    uses: whatever413y/.github/.github/workflows/workers-deploy-api.yml@v1
     secrets: inherit
     with:
       health-url: https://development-api.m18-residences.workers.dev/health

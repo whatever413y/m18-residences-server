@@ -92,9 +92,20 @@ Receipts: `PUT /api/bills/{id}/upload` (multipart, at most 10 MiB) accepts JPEG,
 checked by their bytes. The admin app converts photos to WebP before uploading. Signed-URL responses are
 `{url, content_type}`; the URL points at `/api/files/...` on this Worker, which streams the file from R2.
 
+## Development environment
+
+The `development` branch runs as its own Worker, **`development-api`** (https://development-api.m18-residences.workers.dev),
+from `env.development` in `wrangler.jsonc`: its own D1 and R2 (`m18-residences-dev`, synthetic data from
+[`tools/dev-seed`](tools/dev-seed/README.md)), its own secrets (`wrangler secret put <NAME> --env development`; the
+values are in the infra `.env` as `DEV_*`), and CORS for the apps' preview links (`https://*-admin…`, `https://*-my…`,
+a `*` standing for one DNS label). The production Worker has `preview_urls: false`: a preview link would use the
+production data.
+
 ## CI/CD
 
-- `test.yml`: pushes to `development` and PRs to `main` → fmt, clippy (native and wasm32), tests, `worker-build`.
+- `test.yml`: PRs to `main` → fmt, clippy (native and wasm32), tests, `worker-build`.
+- `development.yml`: pushes to `development` → the same checks → D1 migrations applied to `m18-residences-dev` →
+  deploy `development-api` (production untouched; `live` not moved).
 - `deploy.yml`: pushes to `main` → the same checks → the browser e2e suite (`shared-e2e`) with this commit and
   the apps as they are live → `wrangler deploy` → waits for `/health` to report the commit → moves the `live` tag.
 - `migrate.yml`: production D1 migrations, manual, with approval.

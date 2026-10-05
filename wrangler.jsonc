@@ -1,4 +1,4 @@
-// The API Worker. Secrets (JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD) are set with
+// The API Worker (production: name "api"; env "development": "development-api"). Secrets (JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD) are set with
 // `wrangler secret put`; for `wrangler dev` they come from .dev.vars (see .dev.vars.example).
 {
   "name": "api",
@@ -20,5 +20,33 @@
   "vars": {
     "ALLOWED_ORIGINS": "https://admin.m18-residences.workers.dev,https://my.m18-residences.workers.dev"
   },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // No preview links for production: a preview would run with the production D1 and R2 bindings.
+  "preview_urls": false,
+
+  // The development API (https://development-api.m18-residences.workers.dev), deployed from the development branch
+  // with `--env development`. Environments don't inherit bindings or vars, so all of them are repeated here; it
+  // uses only the -dev database and bucket (synthetic data, tools/dev-seed). Secrets: `wrangler secret put
+  // <NAME> --env development`.
+  "env": {
+    "development": {
+      "name": "development-api",
+      "preview_urls": false,
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "m18-residences-dev",
+          // m18-residences-infra output d1_dev_database_id.
+          "database_id": "246609ce-1f8b-460f-a90e-a3c93074b868",
+          "migrations_dir": "crates/db/migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "FILES", "bucket_name": "m18-residences-dev" }],
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      // The apps' preview links: development-admin, pr-12-admin, development-my, ...
+      "vars": {
+        "ALLOWED_ORIGINS": "https://*-admin.m18-residences.workers.dev,https://*-my.m18-residences.workers.dev"
+      }
+    }
+  }
 }

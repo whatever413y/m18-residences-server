@@ -20,7 +20,12 @@ async fn health_reports_ok_and_the_version() {
 #[tokio::test]
 async fn cors_preflight_allows_only_configured_origins() {
     let app = test_app().await;
-    for origin in [ADMIN_ORIGIN, TENANT_ORIGIN] {
+    // The last one matches the pattern https://*-admin.preview.test (preview links).
+    for origin in [
+        ADMIN_ORIGIN,
+        TENANT_ORIGIN,
+        "https://pr-3-admin.preview.test",
+    ] {
         let reply = app.preflight("/api/rooms", origin).await;
         assert_eq!(reply.status, StatusCode::OK, "{origin}");
         assert_eq!(
@@ -38,13 +43,16 @@ async fn cors_preflight_allows_only_configured_origins() {
             "true"
         );
     }
-    let reply = app.preflight("/api/rooms", "https://evil.example").await;
-    assert!(
-        reply
-            .headers
-            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-            .is_none()
-    );
+    for origin in ["https://evil.example", "https://a.b-admin.preview.test"] {
+        let reply = app.preflight("/api/rooms", origin).await;
+        assert!(
+            reply
+                .headers
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "{origin}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -1,8 +1,7 @@
+# Pull requests into main. Pushes to development are checked (and deployed to the development API) by development.yml.
 name: Tests
 
 on:
-  push:
-    branches: [development]
   pull_request:
     branches: [main]
 

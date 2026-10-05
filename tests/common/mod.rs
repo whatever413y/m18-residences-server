@@ -36,7 +36,9 @@ pub fn test_config() -> Config {
                 "JWT_SECRET" => JWT_SECRET,
                 "ADMIN_USERNAME" => ADMIN_USERNAME,
                 "ADMIN_PASSWORD" => ADMIN_PASSWORD,
-                "ALLOWED_ORIGINS" => "http://localhost:50001,http://localhost:50002",
+                "ALLOWED_ORIGINS" => {
+                    "http://localhost:50001,http://localhost:50002,https://*-admin.preview.test"
+                }
                 _ => return None,
             }
             .to_string(),

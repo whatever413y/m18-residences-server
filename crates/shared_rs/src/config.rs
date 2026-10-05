@@ -1,9 +1,8 @@
 //! Required configuration, from the Worker's vars and secrets (a map in tests).
 //! Every problem is reported at once, and a misconfigured Worker answers every
 //! request with an error instead of running with defaults.
-use axum::http::HeaderValue;
 
-use crate::cors::parse_origins;
+use crate::cors::{AllowedOrigin, parse_origins};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -11,7 +10,7 @@ pub struct Config {
     pub admin_username: String,
     pub admin_password: String,
     /// Browser origins allowed to call the API (`ALLOWED_ORIGINS`, comma-separated).
-    pub allowed_origins: Vec<HeaderValue>,
+    pub allowed_origins: Vec<AllowedOrigin>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,38 @@
+# development is the dev environment: every push is checked, its D1 migrations are applied to the development
+# database (m18-residences-dev), and it is deployed as the Worker development-api
+# (https://development-api.m18-residences.workers.dev, env "development" in wrangler.jsonc). Production is not touched.
+name: Development
+
+on:
+  push:
+    branches: [development]
+  workflow_dispatch:
+
+concurrency:
+  group: development
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: whatever413y/.github/.github/workflows/rust-worker-ci.yml@v1
+
+  migrate:
+    needs: ci
+    uses: whatever413y/.github/.github/workflows/d1-migrate.yml@development
+    # Cross-repo reusable workflows only see the caller's (environment) secrets when they are passed on.
+    secrets: inherit
+    with:
+      database: m18-residences-dev
+      command: apply
+      environment: development
+      wrangler-env: development
+
+  deploy:
+    needs: migrate
+    uses: whatever413y/.github/.github/workflows/workers-deploy-api.yml@development
+    secrets: inherit
+    with:
+      health-url: https://development-api.m18-residences.workers.dev/health
+      environment: development
+      wrangler-env: development
+      move-live: false

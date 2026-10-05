@@ -288,18 +288,80 @@ pub async fn create_bill(
     Ok(created)
 }
 
-/// Replaces a bill's columns and charges in one atomic batch.
+/// Removes `old`'s receipt from file storage once the bill no longer points at
+/// it (`new_receipt` is the bill's receipt now; `None` after a delete). Called
+/// only after the database write succeeded, so a failure here leaves an
+/// orphaned file (logged), never a bill without its receipt.
+async fn remove_replaced_receipt(
+    db: &Db,
+    files: &dyn FileStore,
+    old: &bill::Model,
+    new_receipt: Option<&str>,
+) {
+    let Some(old_receipt) = old.receipt_url.as_deref().filter(|r| !r.is_empty()) else {
+        return;
+    };
+    if new_receipt == Some(old_receipt) {
+        return;
+    }
+    let tenant = match tenant_read_repo::get_by_id(db.conn(), old.tenant_id).await {
+        Ok(Some(tenant)) => tenant,
+        Ok(None) => {
+            log_error!(
+                "Receipt {old_receipt} of bill {} is orphaned: its tenant {} is gone",
+                old.id,
+                old.tenant_id
+            );
+            return;
+        }
+        Err(err) => {
+            log_error!(
+                "Receipt {old_receipt} of bill {} is orphaned: reading its tenant failed ({err})",
+                old.id
+            );
+            return;
+        }
+    };
+    let key = format!("receipts/{}/{old_receipt}", tenant.name);
+    match bill_repo::receipt_in_use(db.conn(), old.tenant_id, old_receipt).await {
+        Ok(false) => {}
+        Ok(true) => {
+            log_warn!("Kept receipt {key}: another bill of the tenant still has it");
+            return;
+        }
+        Err(err) => {
+            log_error!(
+                "Receipt {key} is orphaned: checking whether another bill has it failed ({err})"
+            );
+            return;
+        }
+    }
+    match files.delete(&key).await {
+        Ok(()) => log_ok!("Removed receipt {key} of bill {}", old.id),
+        Err(err) => log_error!(
+            "Receipt {key} of bill {} is orphaned: removing it failed ({})",
+            old.id,
+            err.0
+        ),
+    }
+}
+
+/// Replaces a bill's columns and charges in one atomic batch; a receipt the
+/// bill no longer has is removed from file storage.
 pub async fn update_bill(
     db: &Db,
+    files: &dyn FileStore,
     id: i32,
     input: BillInput,
 ) -> Result<BillWithChargesAndReading, ApiError> {
     validate(&input)?;
-    if bill_repo::get_by_id(db.conn(), id).await?.is_none() {
+    let Some(old) = bill_repo::get_by_id(db.conn(), id).await? else {
         return Err(not_found(id));
-    }
+    };
     check_references(db, &input, Some(id)).await?;
     db.atomic(update_statements(db, id, &input)?).await?;
+    let new_receipt = normalize_receipt(input.receipt_url.clone());
+    remove_replaced_receipt(db, files, &old, new_receipt.as_deref()).await;
 
     let updated = read_back(db, id).await?;
     log_ok!(
@@ -312,7 +374,8 @@ pub async fn update_bill(
 
 /// Like [`update_bill`], first storing `receipt` (if any) under
 /// `receipts/<tenant name>/<unix seconds>-r<reading id>`, which then becomes
-/// the bill's receipt. The stored file is removed again if the update fails.
+/// the bill's receipt. The stored file is removed again if the update fails;
+/// once it succeeds, the receipt it replaced is removed.
 pub async fn update_bill_with_receipt(
     db: &Db,
     files: &dyn FileStore,
@@ -321,15 +384,15 @@ pub async fn update_bill_with_receipt(
     receipt: Option<ReceiptUpload>,
 ) -> Result<BillWithChargesAndReading, ApiError> {
     let Some(receipt) = receipt else {
-        return update_bill(db, id, input).await;
+        return update_bill(db, files, id, input).await;
     };
     validate(&input)?;
     let content_type = sniff(&receipt.bytes)
         .filter(|t| RECEIPT_TYPES.contains(t))
         .ok_or_else(|| ApiError::BadRequest("Unsupported receipt type".into()))?;
-    if bill_repo::get_by_id(db.conn(), id).await?.is_none() {
+    let Some(old) = bill_repo::get_by_id(db.conn(), id).await? else {
         return Err(not_found(id));
-    }
+    };
     let tenant = tenant_read_repo::get_by_id(db.conn(), input.tenant_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest(format!("Tenant {} not found", input.tenant_id)))?;
@@ -354,6 +417,7 @@ pub async fn update_bill_with_receipt(
         }
         return Err(err);
     }
+    remove_replaced_receipt(db, files, &old, input.receipt_url.as_deref()).await;
 
     let updated = read_back(db, id).await?;
     log_ok!(
@@ -364,11 +428,15 @@ pub async fn update_bill_with_receipt(
     Ok(updated)
 }
 
-/// Deletes a bill and its charges in one atomic batch.
-pub async fn delete_bill_with_charges(db: &Db, id: i32) -> Result<(), ApiError> {
-    if bill_repo::get_by_id(db.conn(), id).await?.is_none() {
+/// Deletes a bill and its charges in one atomic batch, then its receipt file.
+pub async fn delete_bill_with_charges(
+    db: &Db,
+    files: &dyn FileStore,
+    id: i32,
+) -> Result<(), ApiError> {
+    let Some(old) = bill_repo::get_by_id(db.conn(), id).await? else {
         return Err(not_found(id));
-    }
+    };
     let backend = db.backend();
     db.atomic(vec![
         additional_charge_repo::delete_by_bill_id_statement(backend, id),
@@ -376,5 +444,6 @@ pub async fn delete_bill_with_charges(db: &Db, id: i32) -> Result<(), ApiError> 
     ])
     .await?;
     log_ok!("Deleted bill id={id} with its charges");
+    remove_replaced_receipt(db, files, &old, None).await;
     Ok(())
 }

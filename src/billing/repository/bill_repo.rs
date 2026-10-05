@@ -53,6 +53,20 @@ pub async fn get_all_by_tenant_id(
         .await
 }
 
+/// Whether a bill of `tenant_id` has the receipt `receipt_url` (bills can share one only when it was set by hand).
+pub async fn receipt_in_use(
+    db: &DatabaseConnection,
+    tenant_id: i32,
+    receipt_url: &str,
+) -> Result<bool, DbErr> {
+    Ok(bill::Entity::find()
+        .filter(bill::Column::TenantId.eq(tenant_id))
+        .filter(bill::Column::ReceiptUrl.eq(receipt_url))
+        .one(db)
+        .await?
+        .is_some())
+}
+
 /// INSERT of a new bill (its id and timestamps come from the column defaults).
 pub fn insert_statement(backend: DbBackend, bill: bill::ActiveModel) -> Statement {
     bill::Entity::insert(bill).build(backend)

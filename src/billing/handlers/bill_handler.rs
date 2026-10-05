@@ -117,7 +117,8 @@ pub async fn update_bill_json_handler(
     let ValidPath(BillId { id }) = path;
     let ValidJson(payload) = body;
     Ok(Json(
-        bill_service::update_bill(&state.db, id, payload.into_input()).await?,
+        bill_service::update_bill(&state.db, state.files.as_ref(), id, payload.into_input())
+            .await?,
     ))
 }
 
@@ -242,6 +243,6 @@ pub async fn delete_bill(
     path: ValidPath<BillId>,
 ) -> Result<StatusCode, ApiError> {
     let ValidPath(BillId { id }) = path;
-    bill_service::delete_bill_with_charges(&state.db, id).await?;
+    bill_service::delete_bill_with_charges(&state.db, state.files.as_ref(), id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

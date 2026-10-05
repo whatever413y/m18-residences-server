@@ -352,6 +352,8 @@ async fn export_contract_fixtures() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{signed_url}");
+    let (status, payments) = app.get("/api/payments", Some(&token_of(&flow.admin))).await;
+    assert_eq!(status, StatusCode::OK, "{payments}");
     let _ = flow.tenant_bills;
 
     std::fs::create_dir_all(&out_dir).unwrap();
@@ -365,6 +367,7 @@ async fn export_contract_fixtures() {
         ("bills.json", flow.bills),
         ("latest_bill.json", flow.latest_bill),
         ("signed_url.json", signed_url),
+        ("payments.json", payments),
     ];
     for (name, mut value) in fixtures {
         redact(&mut value);

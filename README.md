@@ -101,14 +101,22 @@ $env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fi
 | `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
 | `GET /api/signed-urls/receipts/{name}/{file}` | admin, or the tenant with that name |
 | `GET /api/signed-urls/payments/{name}` | any logged-in user |
-| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills` | admin |
+| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payments` | admin |
 
 Errors are JSON `{"error": "..."}` (403 for a tenant token on an admin route, 409 for a conflict, 404 for a
 missing record). Bills come back as `{bill, additional_charges, reading}`.
 
 Receipts: `PUT /api/bills/{id}/upload` (multipart, at most 10 MiB) accepts JPEG, PNG, WebP, GIF, AVIF and PDF,
-checked by their bytes. The admin app converts photos to WebP before uploading. Signed-URL responses are
-`{url, content_type}`; the URL points at `/api/files/...` on this Worker, which streams the file from R2.
+checked by their bytes. The admin app converts photos to WebP before uploading. Once a bill no longer points at a
+receipt (replaced, cleared, or the bill deleted), that file is deleted from R2, after the database write; a failed
+delete is logged and leaves the file behind.
+
+Payment QR images: `GET /api/payments` lists the fixed methods (`bpi`, `gcash`, `maya`) as `{name, key, exists}`;
+`PUT /api/payments/{name}` (multipart part `file`, at most 2 MiB, PNG only, checked by its bytes) replaces
+`payments/<name>.png`. The admin app converts the picked image to PNG first.
+
+Signed-URL responses are `{url, content_type}`; the URL points at `/api/files/...` on this Worker, which streams the
+file from R2.
 
 ## Development environment
 

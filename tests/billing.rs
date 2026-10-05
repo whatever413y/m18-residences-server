@@ -956,6 +956,175 @@ async fn upload_removes_the_stored_receipt_when_the_update_fails() {
     assert_eq!(latest, created, "the update was rolled back");
 }
 
+// ---------- old receipts are removed ----------
+
+/// Gives the bill the receipt `1700000000-r<reading>` with its file stored, as
+/// an earlier upload would have; returns the receipt and its storage key.
+async fn with_stored_receipt(app: &TestApp, w: &World, bill_id: &Value) -> (String, String) {
+    let receipt = format!("1700000000-r{}", w.reading.id);
+    let key = format!("receipts/{TENANT_NAME}/{receipt}");
+    app.files.insert(&key, samples::JPEG, "image/jpeg");
+    let mut body = bill_body(w, w.reading.id);
+    body["receipt_url"] = json!(receipt);
+    let (status, updated) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&app.admin_token()),
+            body,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["bill"]["receipt_url"], json!(receipt));
+    (receipt, key)
+}
+
+#[tokio::test]
+async fn replacing_a_receipt_removes_the_old_file() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    with_stored_receipt(&app, &w, &bill_id).await;
+
+    let form =
+        upload_form(&w, w.reading.id).file("receipt_file", "r.webp", "image/webp", samples::WEBP);
+    let (status, uploaded) = app
+        .put_multipart(
+            &format!("/api/bills/{bill_id}/upload"),
+            Some(&app.admin_token()),
+            form,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    let receipt = uploaded["bill"]["receipt_url"].as_str().unwrap();
+    assert_eq!(
+        app.files.keys(),
+        vec![format!("receipts/{TENANT_NAME}/{receipt}")],
+        "only the new receipt is left"
+    );
+}
+
+#[tokio::test]
+async fn keeping_a_receipt_keeps_its_file() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let (receipt, key) = with_stored_receipt(&app, &w, &bill_id).await;
+
+    // Both updates send the bill's current receipt, as the admin app does.
+    let mut body = bill_body(&w, w.reading.id);
+    body["receipt_url"] = json!(receipt);
+    let (status, _) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&app.admin_token()),
+            body,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let form = upload_form(&w, w.reading.id).field("receipt_url", &receipt);
+    let (status, updated) = app
+        .put_multipart(
+            &format!("/api/bills/{bill_id}/upload"),
+            Some(&app.admin_token()),
+            form,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["bill"]["receipt_url"], json!(receipt));
+    assert_eq!(app.files.keys(), vec![key]);
+}
+
+#[tokio::test]
+async fn clearing_a_receipt_or_deleting_the_bill_removes_its_file() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    with_stored_receipt(&app, &w, &bill_id).await;
+
+    let (status, cleared) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&app.admin_token()),
+            bill_body(&w, w.reading.id),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["bill"]["paid"], false);
+    assert!(app.files.keys().is_empty(), "cleared receipt removed");
+
+    with_stored_receipt(&app, &w, &bill_id).await;
+    let (status, _) = app
+        .delete(&format!("/api/bills/{bill_id}"), Some(&app.admin_token()))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(
+        app.files.keys().is_empty(),
+        "deleted bill's receipt removed"
+    );
+}
+
+#[tokio::test]
+async fn a_receipt_another_bill_still_has_is_kept() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let (receipt, key) = with_stored_receipt(&app, &w, &bill_id).await;
+
+    // A second bill of the same tenant given the same receipt by hand (the JSON API allows it).
+    let second_reading = seed_reading(app.db(), &w.tenant, 150, 200).await;
+    let mut body = bill_body(&w, second_reading.id);
+    body["receipt_url"] = json!(receipt);
+    let (status, second) = app
+        .post("/api/bills", Some(&app.admin_token()), body.clone())
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    let second_id = second["bill"]["id"].clone();
+    let (status, _) = app
+        .put(
+            &format!("/api/bills/{second_id}"),
+            Some(&app.admin_token()),
+            body,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = app
+        .delete(&format!("/api/bills/{bill_id}"), Some(&app.admin_token()))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        app.files.keys(),
+        vec![key],
+        "the other bill's receipt stays"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_receipt_removal_still_saves_the_bill() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let (_, key) = with_stored_receipt(&app, &w, &bill_id).await;
+
+    app.files.set_failing(true);
+    let (status, cleared) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&app.admin_token()),
+            bill_body(&w, w.reading.id),
+        )
+        .await;
+    app.files.set_failing(false);
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["bill"]["paid"], false);
+    assert_eq!(app.files.keys(), vec![key], "the old file is left (logged)");
+}
+
 // ---------- signed links and files ----------
 
 #[tokio::test]
@@ -1105,6 +1274,143 @@ async fn payment_links_are_for_any_logged_in_user() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body, error("name must not contain '/', '\\' or '..'"));
+}
+
+// ---------- payment images ----------
+
+fn payment_form(bytes: &[u8]) -> Multipart {
+    Multipart::default().file("file", "qr.png", "image/png", bytes)
+}
+
+fn payment_list(gcash: bool) -> Value {
+    json!([
+        { "name": "bpi", "key": "payments/bpi.png", "exists": false },
+        { "name": "gcash", "key": "payments/gcash.png", "exists": gcash },
+        { "name": "maya", "key": "payments/maya.png", "exists": false },
+    ])
+}
+
+#[tokio::test]
+async fn admin_replaces_payment_images_as_png() {
+    let app = test_app().await;
+    let token = app.admin_token();
+    let (status, body) = app.get("/api/payments", Some(&token)).await;
+    assert_eq!((status, body), (StatusCode::OK, payment_list(false)));
+
+    let (status, body) = app
+        .put_multipart(
+            "/api/payments/gcash",
+            Some(&token),
+            payment_form(samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({ "name": "gcash", "key": "payments/gcash.png", "exists": true })
+    );
+    let stored = app.files.file("payments/gcash.png").unwrap();
+    assert_eq!(stored.bytes, samples::PNG);
+    assert_eq!(stored.content_type.as_deref(), Some("image/png"));
+
+    // Replacing overwrites the same key.
+    let mut newer = samples::PNG.to_vec();
+    newer.extend_from_slice(b"newer");
+    let (status, _) = app
+        .put_multipart("/api/payments/gcash", Some(&token), payment_form(&newer))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(app.files.keys(), vec!["payments/gcash.png".to_string()]);
+    assert_eq!(app.files.file("payments/gcash.png").unwrap().bytes, newer);
+
+    let (status, body) = app.get("/api/payments", Some(&token)).await;
+    assert_eq!((status, body), (StatusCode::OK, payment_list(true)));
+
+    // Tenants see it through the signed link.
+    let (status, body) = app
+        .get(
+            "/api/signed-urls/payments/gcash",
+            Some(&app.tenant_token(1, "juan")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content_type"], "image/png");
+}
+
+#[tokio::test]
+async fn payment_uploads_are_admin_only_png_for_known_methods() {
+    let app = test_app().await;
+    let token = app.admin_token();
+
+    // The declared type is ignored.
+    for bytes in [samples::JPEG, samples::WEBP, samples::EXE, b"" as &[u8]] {
+        let (status, body) = app
+            .put_multipart("/api/payments/gcash", Some(&token), payment_form(bytes))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, error("Payment images must be PNG files"));
+    }
+
+    for name in ["paypal", "gcash.png", "GCASH"] {
+        let (status, body) = app
+            .put_multipart(
+                &format!("/api/payments/{name}"),
+                Some(&token),
+                payment_form(samples::PNG),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}");
+        assert_eq!(
+            body,
+            error(&format!(
+                "Unknown payment method {name:?}: expected one of bpi, gcash, maya"
+            ))
+        );
+    }
+
+    let (status, body) = app
+        .put_multipart(
+            "/api/payments/gcash",
+            Some(&token),
+            Multipart::default().field("other", "x"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, error("file is required"));
+
+    let mut big = samples::PNG.to_vec();
+    big.resize(2 * 1024 * 1024 + 1, 0);
+    let (status, body) = app
+        .put_multipart("/api/payments/gcash", Some(&token), payment_form(&big))
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body, error("The upload is larger than 2 MiB"));
+
+    let tenant = app.tenant_token(1, "juan");
+    let (status, body) = app.get("/api/payments", Some(&tenant)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, error("Admin access required"));
+    let (status, body) = app
+        .put_multipart(
+            "/api/payments/gcash",
+            Some(&tenant),
+            payment_form(samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, error("Admin access required"));
+    let (status, _) = app.get("/api/payments", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = app
+        .put_multipart("/api/payments/gcash", None, payment_form(samples::PNG))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    assert!(app.files.keys().is_empty(), "nothing was stored");
+
+    app.files.set_failing(true);
+    let (status, _) = app.get("/api/payments", Some(&token)).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]

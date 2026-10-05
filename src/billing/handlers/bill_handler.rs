@@ -18,11 +18,12 @@ use serde::Deserialize;
 use crate::{
     app::AppState,
     billing::services::bill_service::{
-        self, AdditionalChargeInput, BillInput, BillWithChargesAndReading, ReceiptUpload,
+        self, AdditionalChargeInput, BillInput, BillWithChargesAndReading, PaymentUpload,
+        ReceiptUpload,
     },
 };
 
-/// The largest multipart body `PUT /api/bills/{id}/upload` accepts.
+/// The largest multipart body `PUT /api/bills/{id}/upload` and `/payment` accept.
 pub const UPLOAD_LIMIT_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -233,6 +234,50 @@ pub async fn update_bill_multipart_handler(
     Ok(Json(
         bill_service::update_bill_with_receipt(&state.db, state.files.as_ref(), id, input, receipt)
             .await?,
+    ))
+}
+
+/// PUT /api/bills/{id}/payment (admin, or the bill's tenant until it has a
+/// receipt; multipart with one `payment_file` part)
+pub async fn upload_payment_handler(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    path: ValidPath<BillId>,
+    multipart: Result<Multipart, MultipartRejection>,
+) -> Result<Json<BillWithChargesAndReading>, ApiError> {
+    let ValidPath(BillId { id }) = path;
+    let mut multipart =
+        multipart.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
+    let mut payment = None;
+    while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
+        if field.name() != Some("payment_file") {
+            continue; // Other parts are ignored.
+        }
+        if field.file_name().is_none() {
+            return Err(ApiError::BadRequest(
+                "payment_file must be a file part with a filename".into(),
+            ));
+        }
+        let bytes = field.bytes().await.map_err(multipart_error)?;
+        payment = Some(PaymentUpload {
+            bytes: bytes.to_vec(),
+        });
+    }
+    let payment = payment.ok_or_else(|| ApiError::BadRequest("payment_file is required".into()))?;
+    Ok(Json(
+        bill_service::upload_payment(&state.db, state.files.as_ref(), &claims, id, payment).await?,
+    ))
+}
+
+/// DELETE /api/bills/{id}/payment (admin)
+pub async fn clear_payment_handler(
+    State(state): State<AppState>,
+    _admin: Admin,
+    path: ValidPath<BillId>,
+) -> Result<Json<BillWithChargesAndReading>, ApiError> {
+    let ValidPath(BillId { id }) = path;
+    Ok(Json(
+        bill_service::clear_payment(&state.db, state.files.as_ref(), id).await?,
     ))
 }
 

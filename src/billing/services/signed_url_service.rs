@@ -1,4 +1,5 @@
-//! Short-lived signed links to stored files (receipts and payment images),
+//! Short-lived signed links to stored files (receipts, tenants' payment images
+//! and the payment QR images),
 //! served by `GET /api/files/...`.
 use chrono::Utc;
 use m18_residences_shared_rs::{
@@ -61,6 +62,18 @@ pub async fn receipt_link(
 ) -> Result<SignedUrl, ApiError> {
     let key = format!("receipts/{tenant_name}/{filename}");
     link(files, signer, origin, &key, "Receipt not found").await
+}
+
+/// A link to a bill's payment image `tenant-payments/<tenant_name>/<filename>`.
+pub async fn tenant_payment_link(
+    files: &dyn FileStore,
+    signer: &FileSigner,
+    origin: &str,
+    tenant_name: &str,
+    filename: &str,
+) -> Result<SignedUrl, ApiError> {
+    let key = format!("tenant-payments/{tenant_name}/{filename}");
+    link(files, signer, origin, &key, "Payment image not found").await
 }
 
 /// A link to the payment image `payments/<name>.png`.

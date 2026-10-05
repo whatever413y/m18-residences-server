@@ -64,6 +64,34 @@ pub async fn get_receipt_signed_url_handler(
     ))
 }
 
+/// GET /api/signed-urls/tenant-payments/{tenant_name}/{filename} (admin, or that tenant)
+pub async fn get_tenant_payment_signed_url_handler(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    uri: Uri,
+    headers: HeaderMap,
+    path: ValidPath<ReceiptPath>,
+) -> Result<Json<SignedUrl>, ApiError> {
+    let ValidPath(ReceiptPath {
+        tenant_name,
+        filename,
+    }) = path;
+    check_segment("tenant_name", &tenant_name)?;
+    check_segment("filename", &filename)?;
+    claims.ensure_admin_or_name(&tenant_name)?;
+    let origin = request_origin(&uri, &headers)?;
+    Ok(Json(
+        signed_url_service::tenant_payment_link(
+            state.files.as_ref(),
+            &state.signer,
+            &origin,
+            &tenant_name,
+            &filename,
+        )
+        .await?,
+    ))
+}
+
 /// GET /api/signed-urls/payments/{name} (any logged-in user)
 pub async fn get_payment_signed_url_handler(
     State(state): State<AppState>,

@@ -14,6 +14,8 @@ pub struct Model {
     pub electric_charges: i32,
     pub total_amount: i32,
     pub receipt_url: Option<String>,
+    /// The tenant's proof of payment (file name under `tenant-payments/<tenant name>/`).
+    pub payment_url: Option<String>,
     pub paid: bool,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,

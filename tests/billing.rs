@@ -1,4 +1,4 @@
-//! Billing: bills, additional charges, receipt uploads, signed links and the
+//! Billing: bills, additional charges, receipt and payment uploads, signed links and the
 //! file route. Other tables are seeded directly; tokens are minted directly.
 mod common;
 
@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 const ROOM_NAME: &str = "Room 101";
 const TENANT_NAME: &str = "Juan Dela Cruz";
 
-const BILL_KEYS: [&str; 10] = [
+const BILL_KEYS: [&str; 11] = [
     "id",
     "reading_id",
     "tenant_id",
@@ -24,6 +24,7 @@ const BILL_KEYS: [&str; 10] = [
     "electric_charges",
     "total_amount",
     "receipt_url",
+    "payment_url",
     "paid",
     "created_at",
     "updated_at",
@@ -1644,4 +1645,282 @@ async fn read_repos_find_readings_and_tenants() {
         tenant_read_repo::get_by_id(app.db(), 999).await.unwrap(),
         None
     );
+}
+
+// ---------- payment images (the tenant's proof of payment) ----------
+
+fn payment_proof_form(bytes: &[u8]) -> Multipart {
+    Multipart::default().file("payment_file", "payment.bin", "image/png", bytes)
+}
+
+async fn upload_payment(
+    app: &TestApp,
+    bill_id: &Value,
+    token: Option<&str>,
+    bytes: &[u8],
+) -> (StatusCode, Value) {
+    app.put_multipart(
+        &format!("/api/bills/{bill_id}/payment"),
+        token,
+        payment_proof_form(bytes),
+    )
+    .await
+}
+
+fn payment_key(bill: &Value) -> String {
+    format!(
+        "tenant-payments/{TENANT_NAME}/{}",
+        bill["bill"]["payment_url"].as_str().expect("a payment_url")
+    )
+}
+
+#[tokio::test]
+async fn tenant_uploads_a_payment_image_to_its_own_bill() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    assert_eq!(created["bill"]["payment_url"], Value::Null);
+    let bill_id = created["bill"]["id"].clone();
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+
+    let before = chrono::Utc::now().timestamp();
+    let (status, updated) = upload_payment(&app, &bill_id, Some(&own), samples::WEBP).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_bill_details(&updated, "payment upload");
+    let bill = &updated["bill"];
+    assert_eq!(
+        bill["paid"], false,
+        "a payment image alone does not make the bill paid"
+    );
+    assert_eq!(bill["receipt_url"], Value::Null);
+    assert_eq!(bill["total_amount"], created["bill"]["total_amount"]);
+    let payment = bill["payment_url"].as_str().unwrap();
+    let (seconds, reading) = payment.split_once("-r").unwrap();
+    assert_eq!(reading, w.reading.id.to_string());
+    let seconds: i64 = seconds.parse().unwrap();
+    assert!(seconds >= before && seconds <= chrono::Utc::now().timestamp());
+    let stored = app
+        .files
+        .file(&payment_key(&updated))
+        .expect("stored payment image");
+    assert_eq!(stored.bytes, samples::WEBP);
+    assert_eq!(stored.content_type.as_deref(), Some("image/webp"));
+    assert_eq!(updated["additional_charges"], created["additional_charges"]);
+}
+
+#[tokio::test]
+async fn payment_uploads_follow_the_permission_table() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let other = seed_tenant(app.db(), w.room.id, "Pedro").await;
+
+    let pedro = app.tenant_token(other.id, "Pedro");
+    let (status, body) = upload_payment(&app, &bill_id, Some(&pedro), samples::PNG).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, error("You can only access your own records"));
+    // A token with the bill tenant's name but another id is still someone else.
+    let impostor = app.tenant_token(other.id, TENANT_NAME);
+    let (status, _) = upload_payment(&app, &bill_id, Some(&impostor), samples::PNG).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body) = upload_payment(&app, &bill_id, None, samples::PNG).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, error("Authentication required"));
+    assert!(app.files.keys().is_empty());
+
+    let (status, body) =
+        upload_payment(&app, &json!(999), Some(&app.admin_token()), samples::PNG).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Bill 999 not found"));
+
+    // Only admins clear it.
+    let uri = format!("/api/bills/{bill_id}/payment");
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+    let (status, body) = app.delete(&uri, Some(&own)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, error("Admin access required"));
+    let (status, _) = app.delete(&uri, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn tenant_cannot_change_the_payment_of_a_paid_bill_but_the_admin_can() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    with_stored_receipt(&app, &w, &bill_id).await;
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+
+    let (status, body) = upload_payment(&app, &bill_id, Some(&own), samples::PNG).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, error("This bill is already paid"));
+    assert_eq!(app.files.keys().len(), 1, "only the receipt is stored");
+
+    let (status, updated) =
+        upload_payment(&app, &bill_id, Some(&app.admin_token()), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["bill"]["paid"], true);
+    assert!(app.files.file(&payment_key(&updated)).is_some());
+}
+
+#[tokio::test]
+async fn payment_upload_refuses_bad_forms_and_types() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let token = app.admin_token();
+    let uri = format!("/api/bills/{bill_id}/payment");
+
+    for bytes in [samples::HEIC, samples::EXE] {
+        let (status, body) = upload_payment(&app, &bill_id, Some(&token), bytes).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, error("Unsupported payment image type"));
+    }
+    let (status, body) = app
+        .put_multipart(&uri, Some(&token), Multipart::default().field("other", 1))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, error("payment_file is required"));
+
+    let mut big = samples::JPEG.to_vec();
+    big.resize(10 * 1024 * 1024 + 1, 0);
+    let (status, body) = upload_payment(&app, &bill_id, Some(&token), &big).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(body, error("The upload is larger than 10 MiB"));
+
+    app.files.set_failing(true);
+    let (status, _) = upload_payment(&app, &bill_id, Some(&token), samples::PNG).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    app.files.set_failing(false);
+
+    assert!(app.files.keys().is_empty());
+    let (_, latest) = app
+        .get(&format!("/api/bills/{}/bill", w.tenant.id), Some(&token))
+        .await;
+    assert_eq!(latest, created, "the bill is unchanged");
+}
+
+#[tokio::test]
+async fn replacing_and_clearing_a_payment_removes_the_old_file() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let token = app.admin_token();
+
+    // An earlier upload, as stored then.
+    use sea_orm::ConnectionTrait;
+    let old_key = format!("tenant-payments/{TENANT_NAME}/1700000000-r{}", w.reading.id);
+    app.files.insert(&old_key, samples::JPEG, "image/jpeg");
+    app.db()
+        .execute_unprepared(&format!(
+            "UPDATE bill SET payment_url = '1700000000-r{}' WHERE id = {bill_id}",
+            w.reading.id
+        ))
+        .await
+        .unwrap();
+
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+    let (status, updated) = upload_payment(&app, &bill_id, Some(&own), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    let new_key = payment_key(&updated);
+    assert_eq!(app.files.keys(), vec![new_key], "the old file is removed");
+
+    // An admin bill edit keeps the payment image.
+    let (status, edited) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&token),
+            bill_body(&w, w.reading.id),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(
+        edited["bill"]["payment_url"],
+        updated["bill"]["payment_url"]
+    );
+
+    let (status, cleared) = app
+        .delete(&format!("/api/bills/{bill_id}/payment"), Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["bill"]["payment_url"], Value::Null);
+    assert!(app.files.keys().is_empty());
+
+    let (status, body) = app.delete("/api/bills/999/payment", Some(&token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Bill 999 not found"));
+}
+
+#[tokio::test]
+async fn deleting_a_bill_removes_its_payment_image() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let token = app.admin_token();
+    let (status, _) = upload_payment(&app, &bill_id, Some(&token), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(app.files.keys().len(), 1);
+
+    let (status, _) = app
+        .delete(&format!("/api/bills/{bill_id}"), Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(app.files.keys().is_empty());
+}
+
+#[tokio::test]
+async fn payment_links_follow_the_permission_table() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let (_, updated) = upload_payment(
+        &app,
+        &created["bill"]["id"],
+        Some(&app.admin_token()),
+        samples::PNG,
+    )
+    .await;
+    let payment = updated["bill"]["payment_url"].as_str().unwrap();
+    // As the apps request it: the encoded tenant name plus the payment_url.
+    let uri = format!("/api/signed-urls/tenant-payments/Juan%20Dela%20Cruz/{payment}");
+
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+    let (status, body) = app.get(&uri, Some(&own)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content_type"], "image/png");
+    let url = body["url"].as_str().unwrap();
+    let reply = app
+        .request(Method::GET, path_and_query(url), None, None)
+        .await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body, samples::PNG);
+
+    let (status, _) = app.get(&uri, Some(&app.admin_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = app.get(&uri, Some(&app.tenant_token(2, "Pedro"))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, error("You can only access your own records"));
+    let (status, _) = app.get(&uri, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, body) = app
+        .get(
+            "/api/signed-urls/tenant-payments/Juan%20Dela%20Cruz/1-r1",
+            Some(&app.admin_token()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Payment image not found"));
+    let (status, _) = app
+        .get(
+            "/api/signed-urls/tenant-payments/..%2Freceipts/x",
+            Some(&app.admin_token()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

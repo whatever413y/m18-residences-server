@@ -1,6 +1,6 @@
 //! Bills with their additional charges: reads assembled in 3 queries, writes
-//! as atomic statement lists (D1 has no interactive transactions), receipt
-//! uploads to file storage.
+//! as atomic statement lists (D1 has no interactive transactions), receipt and
+//! payment-image uploads to file storage.
 use std::collections::HashMap;
 
 use chrono::Utc;
@@ -9,6 +9,7 @@ use m18_residences_db::{
     entities::{additional_charge, bill, electricity_reading},
 };
 use m18_residences_shared_rs::{
+    auth::Claims,
     error::ApiError,
     files::{FileStore, sniff},
     log_error, log_ok, log_warn,
@@ -50,7 +51,12 @@ pub struct ReceiptUpload {
     pub bytes: Vec<u8>,
 }
 
-/// The receipt types accepted, as sniffed from the file's bytes.
+/// A tenant's proof of payment to store with a bill.
+pub struct PaymentUpload {
+    pub bytes: Vec<u8>,
+}
+
+/// The receipt and payment-image types accepted, as sniffed from the file's bytes.
 const RECEIPT_TYPES: [&str; 6] = [
     "image/webp",
     "image/jpeg",
@@ -107,6 +113,11 @@ fn validate(input: &BillInput) -> Result<(), ApiError> {
         &input.additional_charges,
     )
     .map(|_| ())
+}
+
+/// Where a bill's payment image `file_name` is stored.
+fn payment_key(tenant_name: &str, file_name: &str) -> String {
+    format!("tenant-payments/{tenant_name}/{file_name}")
 }
 
 fn not_found(id: i32) -> ApiError {
@@ -428,7 +439,114 @@ pub async fn update_bill_with_receipt(
     Ok(updated)
 }
 
-/// Deletes a bill and its charges in one atomic batch, then its receipt file.
+/// Removes `old`'s payment image from file storage once the bill no longer
+/// points at it. Called only after the database write succeeded, so a failure
+/// leaves an orphaned file (logged).
+async fn remove_replaced_payment(db: &Db, files: &dyn FileStore, old: &bill::Model) {
+    let Some(old_payment) = old.payment_url.as_deref().filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let tenant = match tenant_read_repo::get_by_id(db.conn(), old.tenant_id).await {
+        Ok(Some(tenant)) => tenant,
+        Ok(None) => {
+            log_error!(
+                "Payment image {old_payment} of bill {} is orphaned: its tenant {} is gone",
+                old.id,
+                old.tenant_id
+            );
+            return;
+        }
+        Err(err) => {
+            log_error!(
+                "Payment image {old_payment} of bill {} is orphaned: reading its tenant failed ({err})",
+                old.id
+            );
+            return;
+        }
+    };
+    let key = payment_key(&tenant.name, old_payment);
+    match files.delete(&key).await {
+        Ok(()) => log_ok!("Removed payment image {key} of bill {}", old.id),
+        Err(err) => log_error!(
+            "Payment image {key} of bill {} is orphaned: removing it failed ({})",
+            old.id,
+            err.0
+        ),
+    }
+}
+
+/// Stores `payment` as bill `id`'s proof of payment under
+/// `tenant-payments/<tenant name>/<unix seconds>-r<reading id>`, replacing
+/// (and then removing) the previous one. Admins may always do this; the
+/// bill's tenant only until the bill has a receipt (409 after).
+pub async fn upload_payment(
+    db: &Db,
+    files: &dyn FileStore,
+    claims: &Claims,
+    id: i32,
+    payment: PaymentUpload,
+) -> Result<BillWithChargesAndReading, ApiError> {
+    let Some(old) = bill_repo::get_by_id(db.conn(), id).await? else {
+        return Err(not_found(id));
+    };
+    claims.ensure_admin_or_tenant(old.tenant_id)?;
+    if !claims.is_admin() && old.receipt_url.as_deref().is_some_and(|r| !r.is_empty()) {
+        return Err(ApiError::Conflict("This bill is already paid".into()));
+    }
+    let content_type = sniff(&payment.bytes)
+        .filter(|t| RECEIPT_TYPES.contains(t))
+        .ok_or_else(|| ApiError::BadRequest("Unsupported payment image type".into()))?;
+    let tenant = tenant_read_repo::get_by_id(db.conn(), old.tenant_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::Internal(format!("bill {id}'s tenant {} is gone", old.tenant_id))
+        })?;
+
+    let file_name = format!("{}-r{}", Utc::now().timestamp(), old.reading_id);
+    let key = payment_key(&tenant.name, &file_name);
+    files.put(&key, payment.bytes, content_type).await?;
+    log_ok!("Stored payment image {key} ({content_type})");
+
+    let statement = bill_repo::set_payment_statement(db.backend(), id, Some(file_name.clone()));
+    if let Err(err) = db.atomic(vec![statement]).await {
+        match files.delete(&key).await {
+            Ok(()) => log_warn!("Removed payment image {key}: the bill {id} update failed"),
+            Err(delete_err) => log_error!(
+                "Payment image {key} is orphaned: the bill {id} update failed and so did its removal ({})",
+                delete_err.0
+            ),
+        }
+        return Err(err.into());
+    }
+    // The same name only when re-uploaded within the second: `put` already replaced it.
+    if old.payment_url.as_deref() != Some(file_name.as_str()) {
+        remove_replaced_payment(db, files, &old).await;
+    }
+    log_ok!("Bill id={id} has a new payment image");
+    read_back(db, id).await
+}
+
+/// Clears bill `id`'s payment image, then removes its file.
+pub async fn clear_payment(
+    db: &Db,
+    files: &dyn FileStore,
+    id: i32,
+) -> Result<BillWithChargesAndReading, ApiError> {
+    let Some(old) = bill_repo::get_by_id(db.conn(), id).await? else {
+        return Err(not_found(id));
+    };
+    db.atomic(vec![bill_repo::set_payment_statement(
+        db.backend(),
+        id,
+        None,
+    )])
+    .await?;
+    remove_replaced_payment(db, files, &old).await;
+    log_ok!("Cleared the payment image of bill id={id}");
+    read_back(db, id).await
+}
+
+/// Deletes a bill and its charges in one atomic batch, then its receipt and payment files.
 pub async fn delete_bill_with_charges(
     db: &Db,
     files: &dyn FileStore,
@@ -445,5 +563,6 @@ pub async fn delete_bill_with_charges(
     .await?;
     log_ok!("Deleted bill id={id} with its charges");
     remove_replaced_receipt(db, files, &old, None).await;
+    remove_replaced_payment(db, files, &old).await;
     Ok(())
 }

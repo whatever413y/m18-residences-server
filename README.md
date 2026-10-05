@@ -1,6 +1,6 @@
 # M18 Residences Server
 
-The M18 Residences API: rooms, tenants, electricity readings, bills and receipts. Rust (Axum 0.8 + SeaORM 2.0)
+The M18 Residences API: rooms, tenants, electricity readings, bills, receipts and tenants' payment images. Rust (Axum 0.8 + SeaORM 2.0)
 running as one Cloudflare Worker (https://api.m18-residences.workers.dev) on a D1 database and an R2 bucket.
 
 ## Layout
@@ -99,7 +99,8 @@ $env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fi
 | `POST /api/auth/admin-login`, `/login` (tenant, by name), `/validate-token` | anyone |
 | `GET /api/files/{*key}` | anyone with a valid signed link (10 minutes) |
 | `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
-| `GET /api/signed-urls/receipts/{name}/{file}` | admin, or the tenant with that name |
+| `GET /api/signed-urls/receipts/{name}/{file}`, `GET /api/signed-urls/tenant-payments/{name}/{file}` | admin, or the tenant with that name |
+| `PUT /api/bills/{id}/payment` | admin, or the bill's tenant until the bill has a receipt (then 409) |
 | `GET /api/signed-urls/payments/{name}` | any logged-in user |
 | everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payments` | admin |
 
@@ -110,6 +111,12 @@ Receipts: `PUT /api/bills/{id}/upload` (multipart, at most 10 MiB) accepts JPEG,
 checked by their bytes. The admin app converts photos to WebP before uploading. Once a bill no longer points at a
 receipt (replaced, cleared, or the bill deleted), that file is deleted from R2, after the database write; a failed
 delete is logged and leaves the file behind.
+
+Payment images (the tenant's proof of payment, optional): `PUT /api/bills/{id}/payment` (multipart part
+`payment_file`, at most 10 MiB, the same types as receipts) stores `tenant-payments/<tenant name>/<unix ts>-r<reading id>`
+and sets only the bill's `payment_url`; `DELETE /api/bills/{id}/payment` (admin) clears it. The replaced or cleared
+file, and a deleted bill's, is removed from R2 after the database write. `paid` still means "has a receipt"; the
+apps show **Unpaid** (neither), **For verification** (payment, no receipt) or **Paid** (receipt).
 
 Payment QR images: `GET /api/payments` lists the fixed methods (`bpi`, `gcash`, `maya`) as `{name, key, exists}`;
 `PUT /api/payments/{name}` (multipart part `file`, at most 2 MiB, PNG only, checked by its bytes) replaces

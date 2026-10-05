@@ -4,7 +4,7 @@
 use m18_residences_db::entities::bill;
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, QueryFilter, QueryOrder,
-    QueryTrait, Select, Statement,
+    QueryTrait, Select, Set, Statement,
 };
 
 fn newest_first(query: Select<bill::Entity>) -> Select<bill::Entity> {
@@ -78,6 +78,22 @@ pub fn update_statement(backend: DbBackend, id: i32, bill: bill::ActiveModel) ->
         .set(bill)
         .filter(bill::Column::Id.eq(id))
         .build(backend)
+}
+
+/// UPDATE of only the bill `id`'s payment image (`None` clears it).
+pub fn set_payment_statement(
+    backend: DbBackend,
+    id: i32,
+    payment_url: Option<String>,
+) -> Statement {
+    update_statement(
+        backend,
+        id,
+        bill::ActiveModel {
+            payment_url: Set(payment_url),
+            ..Default::default()
+        },
+    )
 }
 
 /// DELETE of the bill `id`.

@@ -9,8 +9,9 @@ use m18_residences_shared_rs::auth::AuthUser;
 use crate::{
     app::AppState,
     billing::handlers::bill_handler::{
-        UPLOAD_LIMIT_BYTES, create_bill_handler, delete_bill, get_bill_by_tenant, get_bills,
-        get_bills_by_tenant, update_bill_json_handler, update_bill_multipart_handler,
+        UPLOAD_LIMIT_BYTES, clear_payment_handler, create_bill_handler, delete_bill,
+        get_bill_by_tenant, get_bills, get_bills_by_tenant, update_bill_json_handler,
+        update_bill_multipart_handler, upload_payment_handler,
     },
 };
 
@@ -24,6 +25,12 @@ pub fn bill_routes(state: &AppState) -> Router<AppState> {
         .route(
             "/{id}/upload",
             put(update_bill_multipart_handler).layer(DefaultBodyLimit::max(UPLOAD_LIMIT_BYTES)),
+        )
+        .route(
+            "/{id}/payment",
+            put(upload_payment_handler)
+                .layer(DefaultBodyLimit::max(UPLOAD_LIMIT_BYTES))
+                .delete(clear_payment_handler),
         )
         .route_layer(from_extractor_with_state::<AuthUser, AppState>(
             state.clone(),

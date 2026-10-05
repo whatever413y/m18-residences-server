@@ -36,6 +36,7 @@ const BILL_KEYS: &[&str] = &[
     "created_at",
     "paid",
     "receipt_url",
+    "payment_url",
 ];
 const CHARGE_KEYS: &[&str] = &["amount", "description"];
 

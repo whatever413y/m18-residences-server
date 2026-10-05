@@ -7,10 +7,16 @@ use sea_orm::{ColumnTrait, ColumnType, EntityTrait, IdenStatic, Iterable};
 use crate::entities::{additional_charge, bill, electricity_reading, room, tenant};
 
 /// The D1 migrations, in order. Must list every file in `migrations/` (a test checks it).
-pub const MIGRATIONS: &[(&str, &str)] = &[(
-    "0001_baseline.sql",
-    include_str!("../migrations/0001_baseline.sql"),
-)];
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0001_baseline.sql",
+        include_str!("../migrations/0001_baseline.sql"),
+    ),
+    (
+        "0002_bill_payment.sql",
+        include_str!("../migrations/0002_bill_payment.sql"),
+    ),
+];
 
 /// How a column's value is stored in SQLite and rebuilt into a typed value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +81,7 @@ mod tests {
         assert_eq!(kinds["join_date"], ColumnKind::DateTime);
         assert_eq!(kinds["created_at"], ColumnKind::DateTime);
         assert_eq!(kinds["receipt_url"], ColumnKind::Text);
+        assert_eq!(kinds["payment_url"], ColumnKind::Text);
         assert_eq!(kinds["total_amount"], ColumnKind::Int);
     }
 

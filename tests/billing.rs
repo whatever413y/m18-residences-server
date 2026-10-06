@@ -957,7 +957,18 @@ async fn upload_removes_the_stored_receipt_when_the_update_fails() {
     assert_eq!(latest, created, "the update was rolled back");
 }
 
-// ---------- old receipts are removed ----------
+// ---------- old receipts are archived ----------
+
+/// Asserts `key` was moved to `archive/<key>` with its bytes and type.
+fn assert_archived(app: &TestApp, key: &str, bytes: &[u8], content_type: &str) {
+    assert!(app.files.file(key).is_none(), "{key} is no longer live");
+    let archived = app
+        .files
+        .file(&format!("archive/{key}"))
+        .unwrap_or_else(|| panic!("{key} is archived"));
+    assert_eq!(archived.bytes, bytes);
+    assert_eq!(archived.content_type.as_deref(), Some(content_type));
+}
 
 /// Gives the bill the receipt `1700000000-r<reading>` with its file stored, as
 /// an earlier upload would have; returns the receipt and its storage key.
@@ -980,12 +991,12 @@ async fn with_stored_receipt(app: &TestApp, w: &World, bill_id: &Value) -> (Stri
 }
 
 #[tokio::test]
-async fn replacing_a_receipt_removes_the_old_file() {
+async fn replacing_a_receipt_archives_the_old_file() {
     let app = test_app().await;
     let w = world(&app).await;
     let created = create_bill(&app, &w).await;
     let bill_id = created["bill"]["id"].clone();
-    with_stored_receipt(&app, &w, &bill_id).await;
+    let (_, old_key) = with_stored_receipt(&app, &w, &bill_id).await;
 
     let form =
         upload_form(&w, w.reading.id).file("receipt_file", "r.webp", "image/webp", samples::WEBP);
@@ -1000,9 +1011,13 @@ async fn replacing_a_receipt_removes_the_old_file() {
     let receipt = uploaded["bill"]["receipt_url"].as_str().unwrap();
     assert_eq!(
         app.files.keys(),
-        vec![format!("receipts/{TENANT_NAME}/{receipt}")],
-        "only the new receipt is left"
+        vec![
+            format!("archive/{old_key}"),
+            format!("receipts/{TENANT_NAME}/{receipt}")
+        ],
+        "the new receipt is live, the old one archived"
     );
+    assert_archived(&app, &old_key, samples::JPEG, "image/jpeg");
 }
 
 #[tokio::test]
@@ -1038,12 +1053,12 @@ async fn keeping_a_receipt_keeps_its_file() {
 }
 
 #[tokio::test]
-async fn clearing_a_receipt_or_deleting_the_bill_removes_its_file() {
+async fn clearing_a_receipt_or_deleting_the_bill_archives_its_file() {
     let app = test_app().await;
     let w = world(&app).await;
     let created = create_bill(&app, &w).await;
     let bill_id = created["bill"]["id"].clone();
-    with_stored_receipt(&app, &w, &bill_id).await;
+    let (_, key) = with_stored_receipt(&app, &w, &bill_id).await;
 
     let (status, cleared) = app
         .put(
@@ -1054,17 +1069,17 @@ async fn clearing_a_receipt_or_deleting_the_bill_removes_its_file() {
         .await;
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert_eq!(cleared["bill"]["paid"], false);
-    assert!(app.files.keys().is_empty(), "cleared receipt removed");
+    assert_archived(&app, &key, samples::JPEG, "image/jpeg");
 
+    // The same name again, so the archived copy is replaced by this one.
     with_stored_receipt(&app, &w, &bill_id).await;
+    app.files.insert(&key, samples::PNG, "image/png");
     let (status, _) = app
         .delete(&format!("/api/bills/{bill_id}"), Some(&app.admin_token()))
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(
-        app.files.keys().is_empty(),
-        "deleted bill's receipt removed"
-    );
+    assert_archived(&app, &key, samples::PNG, "image/png");
+    assert_eq!(app.files.keys(), vec![format!("archive/{key}")]);
 }
 
 #[tokio::test]
@@ -1105,7 +1120,7 @@ async fn a_receipt_another_bill_still_has_is_kept() {
 }
 
 #[tokio::test]
-async fn a_failed_receipt_removal_still_saves_the_bill() {
+async fn a_failed_receipt_archive_still_saves_the_bill() {
     let app = test_app().await;
     let w = world(&app).await;
     let created = create_bill(&app, &w).await;
@@ -1123,7 +1138,11 @@ async fn a_failed_receipt_removal_still_saves_the_bill() {
     app.files.set_failing(false);
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert_eq!(cleared["bill"]["paid"], false);
-    assert_eq!(app.files.keys(), vec![key], "the old file is left (logged)");
+    assert_eq!(
+        app.files.keys(),
+        vec![key],
+        "the old file is left at its key (logged)"
+    );
 }
 
 // ---------- signed links and files ----------
@@ -1804,7 +1823,7 @@ async fn payment_upload_refuses_bad_forms_and_types() {
 }
 
 #[tokio::test]
-async fn replacing_and_clearing_a_payment_removes_the_old_file() {
+async fn replacing_and_clearing_a_payment_archives_the_old_file() {
     let app = test_app().await;
     let w = world(&app).await;
     let created = create_bill(&app, &w).await;
@@ -1827,7 +1846,12 @@ async fn replacing_and_clearing_a_payment_removes_the_old_file() {
     let (status, updated) = upload_payment(&app, &bill_id, Some(&own), samples::PNG).await;
     assert_eq!(status, StatusCode::OK, "{updated}");
     let new_key = payment_key(&updated);
-    assert_eq!(app.files.keys(), vec![new_key], "the old file is removed");
+    assert_eq!(
+        app.files.keys(),
+        vec![format!("archive/{old_key}"), new_key.clone()],
+        "the new payment is live, the old one archived"
+    );
+    assert_archived(&app, &old_key, samples::JPEG, "image/jpeg");
 
     // An admin bill edit keeps the payment image.
     let (status, edited) = app
@@ -1848,7 +1872,8 @@ async fn replacing_and_clearing_a_payment_removes_the_old_file() {
         .await;
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert_eq!(cleared["bill"]["payment_url"], Value::Null);
-    assert!(app.files.keys().is_empty());
+    assert_archived(&app, &new_key, samples::PNG, "image/png");
+    assert_eq!(app.files.keys().len(), 2, "both payments are archived");
 
     let (status, body) = app.delete("/api/bills/999/payment", Some(&token)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1856,21 +1881,22 @@ async fn replacing_and_clearing_a_payment_removes_the_old_file() {
 }
 
 #[tokio::test]
-async fn deleting_a_bill_removes_its_payment_image() {
+async fn deleting_a_bill_archives_its_payment_image() {
     let app = test_app().await;
     let w = world(&app).await;
     let created = create_bill(&app, &w).await;
     let bill_id = created["bill"]["id"].clone();
     let token = app.admin_token();
-    let (status, _) = upload_payment(&app, &bill_id, Some(&token), samples::PNG).await;
+    let (status, uploaded) = upload_payment(&app, &bill_id, Some(&token), samples::PNG).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(app.files.keys().len(), 1);
+    let key = payment_key(&uploaded);
 
     let (status, _) = app
         .delete(&format!("/api/bills/{bill_id}"), Some(&token))
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(app.files.keys().is_empty());
+    assert_archived(&app, &key, samples::PNG, "image/png");
+    assert_eq!(app.files.keys(), vec![format!("archive/{key}")]);
 }
 
 #[tokio::test]

@@ -109,13 +109,13 @@ missing record). Bills come back as `{bill, additional_charges, reading}`.
 
 Receipts: `PUT /api/bills/{id}/upload` (multipart, at most 10 MiB) accepts JPEG, PNG, WebP, GIF, AVIF and PDF,
 checked by their bytes. The admin app converts photos to WebP before uploading. Once a bill no longer points at a
-receipt (replaced, cleared, or the bill deleted), that file is deleted from R2, after the database write; a failed
-delete is logged and leaves the file behind.
+receipt (replaced, cleared, or the bill deleted), that file is moved to `archive/<key>` in R2 (copied, then the
+original deleted; kept forever), after the database write; a failed archive is logged and leaves the file at its key.
 
 Payment images (the tenant's proof of payment, optional): `PUT /api/bills/{id}/payment` (multipart part
 `payment_file`, at most 10 MiB, the same types as receipts) stores `tenant-payments/<tenant name>/<unix ts>-r<reading id>`
 and sets only the bill's `payment_url`; `DELETE /api/bills/{id}/payment` (admin) clears it. The replaced or cleared
-file, and a deleted bill's, is removed from R2 after the database write. `paid` still means "has a receipt"; the
+file, and a deleted bill's, is archived the same way (`archive/tenant-payments/...`) after the database write. `paid` still means "has a receipt"; the
 apps show **Unpaid** (neither), **For verification** (payment, no receipt) or **Paid** (receipt).
 
 Payment QR images: `GET /api/payments` lists the fixed methods (`bpi`, `gcash`, `maya`) as `{name, key, exists}`;

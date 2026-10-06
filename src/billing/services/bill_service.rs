@@ -11,7 +11,7 @@ use m18_residences_db::{
 use m18_residences_shared_rs::{
     auth::Claims,
     error::ApiError,
-    files::{FileStore, sniff},
+    files::{FileError, FileStore, sniff},
     log_error, log_ok, log_warn,
 };
 use sea_orm::{Set, Statement};
@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::billing::repository::{
     additional_charge_repo, bill_repo, reading_read_repo, tenant_read_repo,
 };
+use crate::billing::services::signed_url_service::DEFAULT_CONTENT_TYPE;
 
 /// The API shape of a bill: `{bill, additional_charges, reading}`.
 #[derive(Debug, Serialize)]
@@ -299,10 +300,30 @@ pub async fn create_bill(
     Ok(created)
 }
 
-/// Removes `old`'s receipt from file storage once the bill no longer points at
-/// it (`new_receipt` is the bill's receipt now; `None` after a delete). Called
-/// only after the database write succeeded, so a failure here leaves an
-/// orphaned file (logged), never a bill without its receipt.
+/// Where a replaced, cleared or deleted bill's file `key` is kept: `archive/<key>`.
+fn archive_key(key: &str) -> String {
+    format!("archive/{key}")
+}
+
+/// Moves `key` to [`archive_key`] (kept forever): a copy, then the original is
+/// deleted, so a failure never loses the file. A file already gone is logged
+/// and counts as done.
+async fn archive_file(files: &dyn FileStore, key: &str) -> Result<(), FileError> {
+    let Some(file) = files.get(key).await? else {
+        log_warn!("Nothing to archive at {key}: the file is already gone");
+        return Ok(());
+    };
+    let content_type = file.content_type.as_deref().unwrap_or(DEFAULT_CONTENT_TYPE);
+    files
+        .put(&archive_key(key), file.bytes, content_type)
+        .await?;
+    files.delete(key).await
+}
+
+/// Archives `old`'s receipt (see [`archive_file`]) once the bill no longer
+/// points at it (`new_receipt` is the bill's receipt now; `None` after a
+/// delete). Called only after the database write succeeded, so a failure here
+/// leaves the file at its key (logged), never a bill without its receipt.
 async fn remove_replaced_receipt(
     db: &Db,
     files: &dyn FileStore,
@@ -347,10 +368,10 @@ async fn remove_replaced_receipt(
             return;
         }
     }
-    match files.delete(&key).await {
-        Ok(()) => log_ok!("Removed receipt {key} of bill {}", old.id),
+    match archive_file(files, &key).await {
+        Ok(()) => log_ok!("Archived receipt {key} of bill {}", old.id),
         Err(err) => log_error!(
-            "Receipt {key} of bill {} is orphaned: removing it failed ({})",
+            "Receipt {key} of bill {} is orphaned: archiving it failed ({})",
             old.id,
             err.0
         ),
@@ -358,7 +379,7 @@ async fn remove_replaced_receipt(
 }
 
 /// Replaces a bill's columns and charges in one atomic batch; a receipt the
-/// bill no longer has is removed from file storage.
+/// bill no longer has is archived.
 pub async fn update_bill(
     db: &Db,
     files: &dyn FileStore,
@@ -386,7 +407,7 @@ pub async fn update_bill(
 /// Like [`update_bill`], first storing `receipt` (if any) under
 /// `receipts/<tenant name>/<unix seconds>-r<reading id>`, which then becomes
 /// the bill's receipt. The stored file is removed again if the update fails;
-/// once it succeeds, the receipt it replaced is removed.
+/// once it succeeds, the receipt it replaced is archived.
 pub async fn update_bill_with_receipt(
     db: &Db,
     files: &dyn FileStore,
@@ -439,9 +460,9 @@ pub async fn update_bill_with_receipt(
     Ok(updated)
 }
 
-/// Removes `old`'s payment image from file storage once the bill no longer
-/// points at it. Called only after the database write succeeded, so a failure
-/// leaves an orphaned file (logged).
+/// Archives `old`'s payment image (see [`archive_file`]) once the bill no
+/// longer points at it. Called only after the database write succeeded, so a
+/// failure leaves the file at its key (logged).
 async fn remove_replaced_payment(db: &Db, files: &dyn FileStore, old: &bill::Model) {
     let Some(old_payment) = old.payment_url.as_deref().filter(|p| !p.is_empty()) else {
         return;
@@ -465,10 +486,10 @@ async fn remove_replaced_payment(db: &Db, files: &dyn FileStore, old: &bill::Mod
         }
     };
     let key = payment_key(&tenant.name, old_payment);
-    match files.delete(&key).await {
-        Ok(()) => log_ok!("Removed payment image {key} of bill {}", old.id),
+    match archive_file(files, &key).await {
+        Ok(()) => log_ok!("Archived payment image {key} of bill {}", old.id),
         Err(err) => log_error!(
-            "Payment image {key} of bill {} is orphaned: removing it failed ({})",
+            "Payment image {key} of bill {} is orphaned: archiving it failed ({})",
             old.id,
             err.0
         ),
@@ -546,7 +567,7 @@ pub async fn clear_payment(
     read_back(db, id).await
 }
 
-/// Deletes a bill and its charges in one atomic batch, then its receipt and payment files.
+/// Deletes a bill and its charges in one atomic batch, then archives its receipt and payment files.
 pub async fn delete_bill_with_charges(
     db: &Db,
     files: &dyn FileStore,

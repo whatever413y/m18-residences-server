@@ -1,10 +1,12 @@
 // Fills the development database and bucket (env "development" in ../../wrangler.jsonc) with synthetic data:
-// 6 rooms, 6 tenants, 12 months of readings and bills (all but the latest paid, each with a sample receipt),
-// and placeholder payment QR images. Never touches production: it refuses any database or bucket not named *-dev.
-//   node seed.mjs           seed an empty dev database
-//   node seed.mjs --reset   empty the dev tables first
-// Credentials: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from the secrets file ($M18_SECRETS_FILE, default
-// ../../../m18-residences-infra/.env). Wrangler: $WRANGLER_JS, else the e2e suite's pinned copy.
+// 6 rooms, 6 tenants, 12 months of readings and bills (all but the latest paid, each with a sample receipt; of the
+// latest bills two carry a tenant's payment image ("For verification"), two are paid and two unpaid) and placeholder
+// payment QR images. Never touches production: it refuses any remote database or bucket not named *-dev.
+//   node seed.mjs                            seed an empty dev database
+//   node seed.mjs --reset                    empty the dev tables first
+//   node seed.mjs --local --persist-to DIR   seed wrangler's local D1 and R2 state in DIR instead (no credentials)
+// Credentials (remote only): CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from the secrets file ($M18_SECRETS_FILE,
+// default ../../../m18-residences-infra/.env). Wrangler: $WRANGLER_JS, else the e2e suite's pinned copy.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,25 +16,35 @@ import zlib from 'node:zlib';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const server = path.resolve(here, '..', '..');
-const DB = 'm18-residences-dev';
-const BUCKET = 'm18-residences-dev';
-for (const name of [DB, BUCKET]) if (!name.endsWith('-dev')) throw new Error(`refusing ${name}: not a -dev resource`);
+const local = process.argv.includes('--local');
+const persistArg = process.argv.indexOf('--persist-to');
+const persistTo = persistArg > 0 && process.argv[persistArg + 1] ? path.resolve(process.argv[persistArg + 1]) : undefined;
+if (local && !persistTo) throw new Error('--local needs --persist-to <dir>');
+// Locally: the default environment's bindings in wrangler's local state (what `wrangler dev --persist-to` reads).
+const DB = local ? 'm18-residences' : 'm18-residences-dev';
+const BUCKET = local ? 'm18-residences' : 'm18-residences-dev';
+if (!local) for (const name of [DB, BUCKET]) if (!name.endsWith('-dev')) throw new Error(`refusing ${name}: not a -dev resource`);
+const target = local ? ['--local', '--persist-to', persistTo] : ['--remote'];
 
-const secretsFile = process.env.M18_SECRETS_FILE ?? path.resolve(server, '..', 'm18-residences-infra', '.env');
-const secrets = Object.fromEntries(
-  fs
-    .readFileSync(secretsFile, 'utf8')
-    .split(/\r?\n/)
-    .map((l) => l.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/))
-    .filter(Boolean)
-    .map((m) => [m[1], m[2].trim().replace(/^["']|["']$/g, '')]),
-);
-for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
-  if (!secrets[name]) throw new Error(`${name} is missing in ${secretsFile}`);
+/** The process env plus the Cloudflare credentials from the secrets file (remote only). */
+function remoteEnv() {
+  const secretsFile = process.env.M18_SECRETS_FILE ?? path.resolve(server, '..', 'm18-residences-infra', '.env');
+  const secrets = Object.fromEntries(
+    fs
+      .readFileSync(secretsFile, 'utf8')
+      .split(/\r?\n/)
+      .map((l) => l.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/))
+      .filter(Boolean)
+      .map((m) => [m[1], m[2].trim().replace(/^["']|["']$/g, '')]),
+  );
+  for (const name of ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) {
+    if (!secrets[name]) throw new Error(`${name} is missing in ${secretsFile}`);
+  }
+  return { ...process.env, CLOUDFLARE_API_TOKEN: secrets.CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID: secrets.CLOUDFLARE_ACCOUNT_ID };
 }
 const wranglerJs =
   process.env.WRANGLER_JS ?? path.resolve(server, '..', 'shared-e2e', 'm18-residences', 'node_modules', 'wrangler', 'bin', 'wrangler.js');
-const env = { ...process.env, CLOUDFLARE_API_TOKEN: secrets.CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID: secrets.CLOUDFLARE_ACCOUNT_ID };
+const env = local ? process.env : remoteEnv();
 const wrangler = (args) => execFileSync('node', [wranglerJs, ...args], { cwd: server, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
 /** A grayscale PNG drawn by `pixel(x, y)` (0 black … 255 white). */
@@ -79,6 +91,10 @@ function fakeQr(seed) {
 /** A fake receipt: a sheet with ruled lines. */
 const fakeReceipt = () => png(400, 560, (x, y) => (x < 20 || x > 380 || y < 20 || y > 540 ? 200 : y % 40 === 0 && x > 50 && x < 350 ? 120 : 250));
 
+/** A fake proof of payment: a phone screenshot with a header bar and a few lines of text. */
+const fakePayment = () =>
+  png(360, 640, (x, y) => (y < 90 ? 70 : y > 160 && y < 520 && y % 48 < 14 && x > 40 && x < (y % 96 < 48 ? 320 : 220) ? 150 : 245));
+
 const TENANTS = ['ALPHA', 'BRAVO', 'CHARLIE', 'DELTA', 'ECHO', 'FOXTROT'];
 const MONTHS = 12;
 const RATE = 12; // pesos per kWh
@@ -94,6 +110,7 @@ if (process.argv.includes('--reset')) {
   sql.push('DELETE FROM sqlite_sequence;');
 }
 const receipts = [];
+const payments = [];
 let reading = 0;
 let charge = 0;
 TENANTS.forEach((name, i) => {
@@ -112,13 +129,17 @@ TENANTS.forEach((name, i) => {
     );
     meter += consumption;
     const water = m % 3 === 0 ? 150 : 0;
-    const paid = m > 1;
+    // The latest bills: ALPHA and BRAVO sent a payment (For verification), CHARLIE and DELTA are paid, ECHO and FOXTROT not yet.
+    const latest = m === 1;
+    const paid = !latest || i === 2 || i === 3;
+    const sentPayment = latest && i < 4;
     const file = `${Date.parse(`${at.replace(' ', 'T')}Z`) / 1000 + 5 * 86400}-r${reading}`;
     sql.push(
-      `INSERT INTO bill (id, reading_id, tenant_id, room_charges, electric_charges, total_amount, receipt_url, paid, created_at, updated_at) ` +
+      `INSERT INTO bill (id, reading_id, tenant_id, room_charges, electric_charges, total_amount, receipt_url, payment_url, paid, created_at, updated_at) ` +
         `VALUES (${reading}, ${reading}, ${room}, ${rent}, ${consumption * RATE}, ${rent + consumption * RATE + water}, ` +
-        `${paid ? q(file) : 'NULL'}, ${paid ? 1 : 0}, ${q(at)}, ${q(at)});`,
+        `${paid ? q(file) : 'NULL'}, ${sentPayment ? q(file) : 'NULL'}, ${paid ? 1 : 0}, ${q(at)}, ${q(at)});`,
     );
+    if (sentPayment) payments.push(`tenant-payments/${name}/${file}`);
     if (water) {
       sql.push(
         `INSERT INTO additional_charge (id, bill_id, amount, description, created_at, updated_at) VALUES (${++charge}, ${reading}, ${water}, 'Water', ${q(at)}, ${q(at)});`,
@@ -132,10 +153,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'm18-dev-seed-'));
 try {
   const sqlFile = path.join(tmp, 'seed.sql');
   fs.writeFileSync(sqlFile, `${sql.join('\n')}\n`);
-  wrangler(['d1', 'execute', DB, '--env', 'development', '--remote', '--file', sqlFile, '--yes']);
+  wrangler(['d1', 'execute', DB, ...(local ? [] : ['--env', 'development']), ...target, '--file', sqlFile, '--yes']);
   console.log(`✅ ${DB}: ${TENANTS.length} rooms, ${TENANTS.length} tenants, ${reading} readings and bills, ${charge} charges`);
 
-  const put = (key, file) => wrangler(['r2', 'object', 'put', `${BUCKET}/${key}`, '--file', file, '--content-type', 'image/png', '--remote']);
+  const put = (key, file) => wrangler(['r2', 'object', 'put', `${BUCKET}/${key}`, '--file', file, '--content-type', 'image/png', ...target]);
   for (const [i, name] of ['bpi', 'gcash', 'maya'].entries()) {
     const file = path.join(tmp, `${name}.png`);
     fs.writeFileSync(file, fakeQr(i));
@@ -144,8 +165,11 @@ try {
   const receiptFile = path.join(tmp, 'receipt.png');
   fs.writeFileSync(receiptFile, fakeReceipt());
   for (const key of receipts) put(key, receiptFile);
-  console.log(`✅ ${BUCKET}: 3 payment images, ${receipts.length} receipts`);
-  console.log(`Tenant links: https://development-my.m18-residences.workers.dev/<NAME> for ${TENANTS.join(', ')}`);
+  const paymentFile = path.join(tmp, 'payment.png');
+  fs.writeFileSync(paymentFile, fakePayment());
+  for (const key of payments) put(key, paymentFile);
+  console.log(`✅ ${BUCKET}: 3 payment QR images, ${receipts.length} receipts, ${payments.length} tenant payments`);
+  if (!local) console.log(`Tenant links: https://development-my.m18-residences.workers.dev/<NAME> for ${TENANTS.join(', ')}`);
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

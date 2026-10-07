@@ -12,8 +12,7 @@ use crate::{
     app::AppState,
     billing::routes::{
         bill_routes::bill_routes, file_routes::file_routes,
-        payment_method_routes::payment_method_routes, payment_routes::payment_routes,
-        signed_url_routes::signed_url_routes,
+        payment_method_routes::payment_method_routes, signed_url_routes::signed_url_routes,
     },
 };
 
@@ -21,7 +20,6 @@ pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(bill_routes(state))
         .merge(payment_method_routes(state))
-        .merge(payment_routes(state))
         .merge(signed_url_routes(state))
         .merge(file_routes())
 }

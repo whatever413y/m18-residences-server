@@ -115,20 +115,6 @@ impl PaymentMethodInput {
     }
 }
 
-/// The name in URLs and file names: lowercase, every run of other characters than `a-z`/`0-9` one `-`
-/// ("GCash" → `gcash`, "Union Bank" → `union-bank`).
-pub fn slug(name: &str) -> String {
-    let mut slug = String::with_capacity(name.len());
-    for c in name.chars().flat_map(char::to_lowercase) {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c);
-        } else if !slug.is_empty() && !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    slug.trim_end_matches('-').to_owned()
-}
-
 fn not_found(id: i32) -> ApiError {
     ApiError::NotFound(format!("Payment method {id} not found"))
 }
@@ -153,17 +139,6 @@ pub async fn get(db: &Db, id: i32) -> Result<payment_method::Model, ApiError> {
     payment_method_repo::get_by_id(db.conn(), id)
         .await?
         .ok_or_else(|| not_found(id))
-}
-
-/// The method whose name has this [`slug`], if any.
-pub async fn find_by_slug(
-    db: &Db,
-    wanted: &str,
-) -> Result<Option<payment_method::Model>, ApiError> {
-    Ok(list(db)
-        .await?
-        .into_iter()
-        .find(|m| slug(&m.name) == wanted))
 }
 
 /// Adds a method without an image (400 if invalid, 409 if the name is taken); last in the list unless placed.
@@ -296,18 +271,5 @@ async fn archive_image(files: &dyn FileStore, id: i32, key: Option<&str>) {
             "Payment image {key} of payment method {id} is orphaned: archiving it failed ({})",
             err.0
         ),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::slug;
-
-    #[test]
-    fn slugs_are_lowercase_and_dashed() {
-        assert_eq!(slug("GCash"), "gcash");
-        assert_eq!(slug("BPI"), "bpi");
-        assert_eq!(slug("  Union Bank (Savings) "), "union-bank-savings");
-        assert_eq!(slug("Maya!"), "maya");
     }
 }

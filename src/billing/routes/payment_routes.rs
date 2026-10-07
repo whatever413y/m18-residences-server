@@ -8,13 +8,13 @@ use m18_residences_shared_rs::auth::AuthUser;
 
 use crate::{
     app::AppState,
-    billing::handlers::payment_handler::{
-        PAYMENT_UPLOAD_LIMIT_BYTES, list_payments, replace_payment,
+    billing::handlers::{
+        payment_handler::{list_payments, replace_payment},
+        payment_method_handler::PAYMENT_UPLOAD_LIMIT_BYTES,
     },
 };
 
-/// `/api/payments`: payment QR images, admin only (tenants read them through
-/// `/api/signed-urls/payments/{name}`).
+/// `/api/payments`: transitional, the payment QR images by method slug, admin only (see `payment_service`).
 pub fn payment_routes(state: &AppState) -> Router<AppState> {
     let payments = Router::new()
         .route("/", get(list_payments))

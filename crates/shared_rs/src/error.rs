@@ -92,6 +92,25 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Which constraint a failed write broke. SQLite (D1 and the native tests)
+/// reports constraint failures only in the message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Violation {
+    Unique,
+    ForeignKey,
+}
+
+pub fn violation(err: &DbErr) -> Option<Violation> {
+    let text = err.to_string();
+    if text.contains("UNIQUE constraint failed") {
+        Some(Violation::Unique)
+    } else if text.contains("FOREIGN KEY constraint failed") {
+        Some(Violation::ForeignKey)
+    } else {
+        None
+    }
+}
+
 /// Database errors by what they mean for the client. SQLite (D1 and the native
 /// tests) reports constraint failures only in the message text.
 impl From<DbErr> for ApiError {

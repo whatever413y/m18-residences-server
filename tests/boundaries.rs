@@ -10,7 +10,7 @@ use std::{
 const DOMAINS: &[(&str, &[&str])] = &[
     ("accounts", &[]),
     ("property", &["room", "tenant", "electricity_reading"]),
-    ("billing", &["bill", "additional_charge"]),
+    ("billing", &["bill", "additional_charge", "payment_method"]),
 ];
 const TABLES: &[&str] = &[
     "room",
@@ -18,6 +18,7 @@ const TABLES: &[&str] = &[
     "electricity_reading",
     "bill",
     "additional_charge",
+    "payment_method",
 ];
 /// Folders under `src/` that are not domains.
 const NOT_DOMAINS: &[&str] = &[];

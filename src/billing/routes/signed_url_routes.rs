@@ -4,8 +4,8 @@ use m18_residences_shared_rs::auth::AuthUser;
 use crate::{
     app::AppState,
     billing::handlers::signed_url_handler::{
-        get_payment_signed_url_handler, get_receipt_signed_url_handler,
-        get_tenant_payment_signed_url_handler,
+        get_payment_method_signed_url_handler, get_payment_signed_url_handler,
+        get_receipt_signed_url_handler, get_tenant_payment_signed_url_handler,
     },
 };
 
@@ -19,6 +19,10 @@ pub fn signed_url_routes(state: &AppState) -> Router<AppState> {
         .route(
             "/tenant-payments/{tenant_name}/{filename}",
             get(get_tenant_payment_signed_url_handler),
+        )
+        .route(
+            "/payment-methods/{id}",
+            get(get_payment_method_signed_url_handler),
         )
         .route("/payments/{name}", get(get_payment_signed_url_handler))
         .route_layer(from_extractor_with_state::<AuthUser, AppState>(

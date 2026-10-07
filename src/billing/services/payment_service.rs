@@ -1,75 +1,65 @@
-//! Payment QR images (`payments/<name>.png`), one per fixed payment method;
-//! the admin replaces them, everyone logged in views them via signed links.
-use m18_residences_shared_rs::{
-    error::ApiError,
-    files::{FileStore, sniff},
-    log_ok,
-};
+//! Transitional: the payment-image API the apps used before payment methods (`GET /api/payments`,
+//! `PUT /api/payments/{name}`, `GET /api/signed-urls/payments/{name}`), now backed by the `payment_method` table and
+//! finding a method by the [`slug`] of its name. Remove once both apps with payment methods are live.
+use m18_residences_db::Db;
+use m18_residences_shared_rs::{error::ApiError, files::FileStore};
 use serde::Serialize;
 
-/// The payment methods the apps offer; their images are the only files under `payments/`.
-pub const PAYMENT_METHODS: [&str; 3] = ["bpi", "gcash", "maya"];
-
-/// Payment images are stored as PNG (QR codes stay sharp); the admin app converts them.
-const PAYMENT_TYPE: &str = "image/png";
+use crate::billing::services::payment_method_service::{self, slug};
 
 #[derive(Debug, Serialize)]
 pub struct PaymentImage {
+    /// The method's slug, e.g. `gcash`.
     pub name: String,
-    /// The storage key, e.g. `payments/gcash.png`.
+    /// The storage key of its image (where it would be when it has none).
     pub key: String,
     /// Whether an image is stored for this method.
     pub exists: bool,
 }
 
-fn key(name: &str) -> String {
-    format!("payments/{name}.png")
-}
-
-fn check_method(name: &str) -> Result<(), ApiError> {
-    if PAYMENT_METHODS.contains(&name) {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequest(format!(
-            "Unknown payment method {name:?}: expected one of {}",
-            PAYMENT_METHODS.join(", ")
-        )))
-    }
-}
-
 /// Every payment method with whether its image is stored.
-pub async fn list(files: &dyn FileStore) -> Result<Vec<PaymentImage>, ApiError> {
-    let mut images = Vec::with_capacity(PAYMENT_METHODS.len());
-    for name in PAYMENT_METHODS {
-        let key = key(name);
-        let exists = files.head(&key).await?.is_some();
+pub async fn list(db: &Db, files: &dyn FileStore) -> Result<Vec<PaymentImage>, ApiError> {
+    let methods = payment_method_service::list(db).await?;
+    let mut images = Vec::with_capacity(methods.len());
+    for method in methods {
+        let name = slug(&method.name);
+        let exists = match &method.image_key {
+            Some(key) => files.head(key).await?.is_some(),
+            None => false,
+        };
         images.push(PaymentImage {
-            name: name.into(),
-            key,
+            key: method
+                .image_key
+                .unwrap_or_else(|| format!("payments/{name}.png")),
+            name,
             exists,
         });
     }
     Ok(images)
 }
 
-/// Stores `bytes` (a PNG) as the image of the payment method `name`, replacing the old one.
+/// Stores `bytes` (a PNG) as the image of the payment method named `name` (404 if there is none).
 pub async fn replace(
+    db: &Db,
     files: &dyn FileStore,
     name: &str,
     bytes: Vec<u8>,
 ) -> Result<PaymentImage, ApiError> {
-    check_method(name)?;
-    if sniff(&bytes) != Some(PAYMENT_TYPE) {
-        return Err(ApiError::BadRequest(
-            "Payment images must be PNG files".into(),
-        ));
-    }
-    let key = key(name);
-    files.put(&key, bytes, PAYMENT_TYPE).await?;
-    log_ok!("Stored payment image {key}");
+    let method = payment_method_service::find_by_slug(db, name)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Unknown payment method {name:?}")))?;
+    let updated = payment_method_service::replace_image(db, files, method.id, bytes).await?;
     Ok(PaymentImage {
         name: name.into(),
-        key,
+        key: updated.image_key.unwrap_or_default(),
         exists: true,
     })
+}
+
+/// The storage key of the image of the method named `name` (404 if there is no such method or image).
+pub async fn image_key(db: &Db, name: &str) -> Result<String, ApiError> {
+    payment_method_service::find_by_slug(db, name)
+        .await?
+        .and_then(|m| m.image_key)
+        .ok_or_else(|| ApiError::NotFound("Payment image not found".into()))
 }

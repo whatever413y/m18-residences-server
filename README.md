@@ -101,8 +101,8 @@ $env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fi
 | `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
 | `GET /api/signed-urls/receipts/{name}/{file}`, `GET /api/signed-urls/tenant-payments/{name}/{file}` | admin, or the tenant with that name |
 | `PUT /api/bills/{id}/payment` | admin, or the bill's tenant until the bill has a receipt (then 409) |
-| `GET /api/payment-methods`, `GET /api/signed-urls/payment-methods/{id}`, `GET /api/signed-urls/payments/{name}` | any logged-in user |
-| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payment-methods`, `/api/payments` | admin |
+| `GET /api/payment-methods`, `GET /api/signed-urls/payment-methods/{id}` | any logged-in user |
+| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payment-methods` | admin |
 
 Errors are JSON `{"error": "..."}` (403 for a tenant token on an admin route, 409 for a conflict, 404 for a
 missing record). Bills come back as `{bill, additional_charges, reading}`.
@@ -128,11 +128,6 @@ name at most 80, number at most 40; blank account fields are stored as NULL. The
 stores `payments/<id>-<unix ms>.png` (a new key per upload, so renames never move files and caches never show an
 old image), `DELETE /{id}/image` clears it; the image a method no longer points at (replaced, removed, method
 deleted) is archived like receipts. `GET /api/signed-urls/payment-methods/{id}` links to it (404 without one).
-
-Transitional, until both apps with payment methods are live: `GET /api/payments` (`[{name, key, exists}]`, `name` =
-the method's slug, e.g. `gcash`), `PUT /api/payments/{name}` and `GET /api/signed-urls/payments/{name}` serve the
-apps that still know only BPI, GCash and Maya, finding a method by the slug of its name. Renaming one of those
-breaks them for the old apps.
 
 Signed-URL responses are `{url, content_type}`; the URL points at `/api/files/...` on this Worker, which streams the
 file from R2.

@@ -76,13 +76,12 @@ pub async fn tenant_payment_link(
     link(files, signer, origin, &key, "Payment image not found").await
 }
 
-/// A link to the payment image `payments/<name>.png`.
-pub async fn payment_link(
+/// A link to a payment method's QR image stored at `key`.
+pub async fn payment_method_link(
     files: &dyn FileStore,
     signer: &FileSigner,
     origin: &str,
-    name: &str,
+    key: &str,
 ) -> Result<SignedUrl, ApiError> {
-    let key = format!("payments/{name}.png");
-    link(files, signer, origin, &key, "Payment image not found").await
+    link(files, signer, origin, key, "Payment image not found").await
 }

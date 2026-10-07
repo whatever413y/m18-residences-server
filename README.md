@@ -1,6 +1,6 @@
 # M18 Residences Server
 
-The M18 Residences API: rooms, tenants, electricity readings, bills, receipts and tenants' payment images. Rust (Axum 0.8 + SeaORM 2.0)
+The M18 Residences API: rooms, tenants, electricity readings, bills, receipts, tenants' payment images and the payment methods (with QR images). Rust (Axum 0.8 + SeaORM 2.0)
 running as one Cloudflare Worker (https://api.m18-residences.workers.dev) on a D1 database and an R2 bucket.
 
 ## Layout
@@ -15,7 +15,7 @@ m18-residences-server/
 │   ├── worker_entry.rs   # Worker fetch handler (wasm only): bindings + config → app
 │   ├── accounts/         # /api/auth: admin and tenant login, token validation
 │   ├── property/         # /api/rooms, /api/tenants, /api/electricity-readings
-│   └── billing/          # /api/bills, /api/signed-urls, /api/files (receipts and payment images)
+│   └── billing/          # /api/bills, /api/payment-methods, /api/signed-urls, /api/files (receipts, payment and QR images)
 ├── crates/
 │   ├── shared_rs/        # auth, errors, config, CORS, file storage + signed links, extractors, logging
 │   └── db/               # entities, D1 adapter, migrations/*.sql (the schema's only source)
@@ -101,8 +101,8 @@ $env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fi
 | `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
 | `GET /api/signed-urls/receipts/{name}/{file}`, `GET /api/signed-urls/tenant-payments/{name}/{file}` | admin, or the tenant with that name |
 | `PUT /api/bills/{id}/payment` | admin, or the bill's tenant until the bill has a receipt (then 409) |
-| `GET /api/signed-urls/payments/{name}` | any logged-in user |
-| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payments` | admin |
+| `GET /api/payment-methods`, `GET /api/signed-urls/payment-methods/{id}`, `GET /api/signed-urls/payments/{name}` | any logged-in user |
+| everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payment-methods`, `/api/payments` | admin |
 
 Errors are JSON `{"error": "..."}` (403 for a tenant token on an admin route, 409 for a conflict, 404 for a
 missing record). Bills come back as `{bill, additional_charges, reading}`.
@@ -118,9 +118,21 @@ and sets only the bill's `payment_url`; `DELETE /api/bills/{id}/payment` (admin)
 file, and a deleted bill's, is archived the same way (`archive/tenant-payments/...`) after the database write. `paid` still means "has a receipt"; the
 apps show **Unpaid** (neither), **For verification** (payment, no receipt) or **Paid** (receipt).
 
-Payment QR images: `GET /api/payments` lists the fixed methods (`bpi`, `gcash`, `maya`) as `{name, key, exists}`;
-`PUT /api/payments/{name}` (multipart part `file`, at most 2 MiB, PNG only, checked by its bytes) replaces
-`payments/<name>.png`. The admin app converts the picked image to PNG first.
+Payment methods (table `payment_method`, migration 0003; seeded with BPI, GCash and Maya at their old keys
+`payments/<name>.png`): `GET /api/payment-methods` lists them in order as
+`{id, name, account_name, account_number, sort_order, has_image}`; the admin adds (`POST`, JSON
+`{name, account_name?, account_number?, sort_order?}`; a new one goes last), edits (`PUT /{id}`; the place stays
+unless given) and deletes (`DELETE /{id}`) them. Names are unique in any case (409), at most 40 characters; account
+name at most 80, number at most 40; blank account fields are stored as NULL. The QR image: `PUT /{id}/image`
+(multipart part `file`, at most 2 MiB, PNG only, checked by its bytes; the admin app converts the picked image first)
+stores `payments/<id>-<unix ms>.png` (a new key per upload, so renames never move files and caches never show an
+old image), `DELETE /{id}/image` clears it; the image a method no longer points at (replaced, removed, method
+deleted) is archived like receipts. `GET /api/signed-urls/payment-methods/{id}` links to it (404 without one).
+
+Transitional, until both apps with payment methods are live: `GET /api/payments` (`[{name, key, exists}]`, `name` =
+the method's slug, e.g. `gcash`), `PUT /api/payments/{name}` and `GET /api/signed-urls/payments/{name}` serve the
+apps that still know only BPI, GCash and Maya, finding a method by the slug of its name. Renaming one of those
+breaks them for the old apps.
 
 Signed-URL responses are `{url, content_type}`; the URL points at `/api/files/...` on this Worker, which streams the
 file from R2.

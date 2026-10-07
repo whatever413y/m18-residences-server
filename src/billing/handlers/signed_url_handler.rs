@@ -8,7 +8,10 @@ use serde::Deserialize;
 
 use crate::{
     app::AppState,
-    billing::services::signed_url_service::{self, SignedUrl, check_segment},
+    billing::services::{
+        payment_method_service, payment_service,
+        signed_url_service::{self, SignedUrl, check_segment},
+    },
 };
 
 #[derive(Deserialize)]
@@ -20,6 +23,11 @@ pub struct ReceiptPath {
 #[derive(Deserialize)]
 pub struct PaymentPath {
     pub name: String,
+}
+
+#[derive(Deserialize)]
+pub struct PaymentMethodPath {
+    pub id: i32,
 }
 
 /// Where the API is reached from: the request URI's scheme and authority when
@@ -92,7 +100,25 @@ pub async fn get_tenant_payment_signed_url_handler(
     ))
 }
 
-/// GET /api/signed-urls/payments/{name} (any logged-in user)
+/// GET /api/signed-urls/payment-methods/{id} (any logged-in user): the method's QR image.
+pub async fn get_payment_method_signed_url_handler(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    uri: Uri,
+    headers: HeaderMap,
+    path: ValidPath<PaymentMethodPath>,
+) -> Result<Json<SignedUrl>, ApiError> {
+    let ValidPath(PaymentMethodPath { id }) = path;
+    let key = payment_method_service::image_key(&state.db, id).await?;
+    let origin = request_origin(&uri, &headers)?;
+    Ok(Json(
+        signed_url_service::payment_method_link(state.files.as_ref(), &state.signer, &origin, &key)
+            .await?,
+    ))
+}
+
+/// GET /api/signed-urls/payments/{name} (any logged-in user). Transitional: the QR image of the method whose name
+/// has this slug; remove with the other `/api/payments` routes.
 pub async fn get_payment_signed_url_handler(
     State(state): State<AppState>,
     _user: AuthUser,
@@ -102,9 +128,10 @@ pub async fn get_payment_signed_url_handler(
 ) -> Result<Json<SignedUrl>, ApiError> {
     let ValidPath(PaymentPath { name }) = path;
     check_segment("name", &name)?;
+    let key = payment_service::image_key(&state.db, &name).await?;
     let origin = request_origin(&uri, &headers)?;
     Ok(Json(
-        signed_url_service::payment_link(state.files.as_ref(), &state.signer, &origin, &name)
+        signed_url_service::payment_method_link(state.files.as_ref(), &state.signer, &origin, &key)
             .await?,
     ))
 }

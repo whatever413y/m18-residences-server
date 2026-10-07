@@ -11,7 +11,7 @@ use m18_residences_db::{
 use m18_residences_shared_rs::{
     auth::Claims,
     error::ApiError,
-    files::{FileError, FileStore, sniff},
+    files::{FileStore, sniff},
     log_error, log_ok, log_warn,
 };
 use sea_orm::{Set, Statement};
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::billing::repository::{
     additional_charge_repo, bill_repo, reading_read_repo, tenant_read_repo,
 };
-use crate::billing::services::signed_url_service::DEFAULT_CONTENT_TYPE;
+use crate::billing::services::archive::archive_file;
 
 /// The API shape of a bill: `{bill, additional_charges, reading}`.
 #[derive(Debug, Serialize)]
@@ -298,26 +298,6 @@ pub async fn create_bill(
         created.additional_charges.len()
     );
     Ok(created)
-}
-
-/// Where a replaced, cleared or deleted bill's file `key` is kept: `archive/<key>`.
-fn archive_key(key: &str) -> String {
-    format!("archive/{key}")
-}
-
-/// Moves `key` to [`archive_key`] (kept forever): a copy, then the original is
-/// deleted, so a failure never loses the file. A file already gone is logged
-/// and counts as done.
-async fn archive_file(files: &dyn FileStore, key: &str) -> Result<(), FileError> {
-    let Some(file) = files.get(key).await? else {
-        log_warn!("Nothing to archive at {key}: the file is already gone");
-        return Ok(());
-    };
-    let content_type = file.content_type.as_deref().unwrap_or(DEFAULT_CONTENT_TYPE);
-    files
-        .put(&archive_key(key), file.bytes, content_type)
-        .await?;
-    files.delete(key).await
 }
 
 /// Archives `old`'s receipt (see [`archive_file`]) once the bill no longer

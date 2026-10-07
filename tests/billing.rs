@@ -1,4 +1,4 @@
-//! Billing: bills, additional charges, receipt and payment uploads, signed links and the
+//! Billing: bills, additional charges, receipt and payment uploads, payment methods, signed links and the
 //! file route. Other tables are seeded directly; tokens are minted directly.
 mod common;
 
@@ -1258,139 +1258,310 @@ async fn receipt_links_follow_the_permission_table() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
-#[tokio::test]
-async fn payment_links_are_for_any_logged_in_user() {
-    let app = test_app().await;
-    app.files
-        .insert("payments/gcash.png", samples::PNG, "image/png");
-    for token in [app.admin_token(), app.tenant_token(1, "juan")] {
-        let (status, body) = app
-            .get("/api/signed-urls/payments/gcash", Some(&token))
-            .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        let url = body["url"].as_str().unwrap();
-        assert!(
-            url.starts_with("http://api.test/api/files/payments/gcash.png?expires="),
-            "{url}"
-        );
-        assert_eq!(body["content_type"], "image/png");
-        let reply = app
-            .request(Method::GET, path_and_query(url), None, None)
-            .await;
-        assert_eq!(reply.status, StatusCode::OK);
-        assert_eq!(reply.body, samples::PNG);
-    }
-
-    let (status, body) = app.get("/api/signed-urls/payments/gcash", None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(body, error("Authentication required"));
-    let (status, body) = app
-        .get("/api/signed-urls/payments/maya", Some(&app.admin_token()))
-        .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, error("Payment image not found"));
-    let (status, body) = app
-        .get("/api/signed-urls/payments/..", Some(&app.admin_token()))
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body, error("name must not contain '/', '\\' or '..'"));
-}
-
-// ---------- payment images ----------
+// ---------- payment methods ----------
 
 fn payment_form(bytes: &[u8]) -> Multipart {
     Multipart::default().file("file", "qr.png", "image/png", bytes)
 }
 
-fn payment_list(gcash: bool) -> Value {
+/// The three methods the migration seeds, as listed.
+fn seeded_methods() -> Value {
     json!([
-        { "name": "bpi", "key": "payments/bpi.png", "exists": false },
-        { "name": "gcash", "key": "payments/gcash.png", "exists": gcash },
-        { "name": "maya", "key": "payments/maya.png", "exists": false },
+        { "id": 1, "name": "BPI", "account_name": null, "account_number": null, "sort_order": 1, "has_image": true },
+        { "id": 2, "name": "GCash", "account_name": null, "account_number": null, "sort_order": 2, "has_image": true },
+        { "id": 3, "name": "Maya", "account_name": null, "account_number": null, "sort_order": 3, "has_image": true },
     ])
 }
 
-#[tokio::test]
-async fn admin_replaces_payment_images_as_png() {
-    let app = test_app().await;
-    let token = app.admin_token();
-    let (status, body) = app.get("/api/payments", Some(&token)).await;
-    assert_eq!((status, body), (StatusCode::OK, payment_list(false)));
-
-    let (status, body) = app
-        .put_multipart(
-            "/api/payments/gcash",
-            Some(&token),
-            payment_form(samples::PNG),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        body,
-        json!({ "name": "gcash", "key": "payments/gcash.png", "exists": true })
-    );
-    let stored = app.files.file("payments/gcash.png").unwrap();
-    assert_eq!(stored.bytes, samples::PNG);
-    assert_eq!(stored.content_type.as_deref(), Some("image/png"));
-
-    // Replacing overwrites the same key.
-    let mut newer = samples::PNG.to_vec();
-    newer.extend_from_slice(b"newer");
-    let (status, _) = app
-        .put_multipart("/api/payments/gcash", Some(&token), payment_form(&newer))
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(app.files.keys(), vec!["payments/gcash.png".to_string()]);
-    assert_eq!(app.files.file("payments/gcash.png").unwrap().bytes, newer);
-
-    let (status, body) = app.get("/api/payments", Some(&token)).await;
-    assert_eq!((status, body), (StatusCode::OK, payment_list(true)));
-
-    // Tenants see it through the signed link.
-    let (status, body) = app
-        .get(
-            "/api/signed-urls/payments/gcash",
-            Some(&app.tenant_token(1, "juan")),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["content_type"], "image/png");
+fn image_key_of(app: &TestApp, prefix: &str) -> String {
+    let keys: Vec<String> = app
+        .files
+        .keys()
+        .into_iter()
+        .filter(|k| k.starts_with(prefix))
+        .collect();
+    assert_eq!(keys.len(), 1, "one file under {prefix}: {keys:?}");
+    keys[0].clone()
 }
 
 #[tokio::test]
-async fn payment_uploads_are_admin_only_png_for_known_methods() {
+async fn payment_methods_are_listed_for_any_logged_in_user() {
+    let app = test_app().await;
+    for token in [app.admin_token(), app.tenant_token(1, "juan")] {
+        let (status, body) = app.get("/api/payment-methods", Some(&token)).await;
+        assert_eq!((status, body), (StatusCode::OK, seeded_methods()));
+    }
+    let (status, body) = app.get("/api/payment-methods", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body, error("Authentication required"));
+}
+
+#[tokio::test]
+async fn admin_adds_edits_and_deletes_payment_methods() {
+    let app = test_app().await;
+    let token = app.admin_token();
+
+    let (status, created) = app
+        .post(
+            "/api/payment-methods",
+            Some(&token),
+            json!({ "name": "  Union Bank ", "account_name": "M18 Residences", "account_number": " 0012 3456 7890 " }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(
+        created,
+        json!({ "id": 4, "name": "Union Bank", "account_name": "M18 Residences", "account_number": "0012 3456 7890", "sort_order": 4, "has_image": false })
+    );
+
+    // Edits replace the details; a blank account field is cleared, and the place stays unless given.
+    let (status, updated) = app
+        .put(
+            "/api/payment-methods/4",
+            Some(&token),
+            json!({ "name": "UnionBank", "account_name": "", "account_number": "001234567890" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(
+        updated,
+        json!({ "id": 4, "name": "UnionBank", "account_name": null, "account_number": "001234567890", "sort_order": 4, "has_image": false })
+    );
+    let (status, moved) = app
+        .put(
+            "/api/payment-methods/4",
+            Some(&token),
+            json!({ "name": "UnionBank", "sort_order": 0 }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    let (_, list) = app.get("/api/payment-methods", Some(&token)).await;
+    let names: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["UnionBank", "BPI", "GCash", "Maya"]);
+
+    let (status, _) = app.delete("/api/payment-methods/4", Some(&token)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, list) = app.get("/api/payment-methods", Some(&token)).await;
+    assert_eq!(list, seeded_methods());
+    let (status, body) = app.delete("/api/payment-methods/4", Some(&token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Payment method 4 not found"));
+}
+
+#[tokio::test]
+async fn payment_method_input_is_checked() {
+    let app = test_app().await;
+    let token = app.admin_token();
+
+    let (status, body) = app
+        .post(
+            "/api/payment-methods",
+            Some(&token),
+            json!({ "name": "gcash" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "names are unique in any case");
+    assert_eq!(
+        body,
+        error("A payment method named \"gcash\" already exists")
+    );
+    let (status, body) = app
+        .put(
+            "/api/payment-methods/1",
+            Some(&token),
+            json!({ "name": "Maya" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        body,
+        error("A payment method named \"Maya\" already exists")
+    );
+
+    for (input, message) in [
+        (json!({ "name": "  " }), "name must not be empty"),
+        (
+            json!({ "name": "x".repeat(41) }),
+            "name must be at most 40 characters",
+        ),
+        (
+            json!({ "name": "Bank", "account_name": "x".repeat(81) }),
+            "account_name must be at most 80 characters",
+        ),
+        (
+            json!({ "name": "Bank", "account_number": "1".repeat(41) }),
+            "account_number must be at most 40 characters",
+        ),
+        (
+            json!({ "name": "Ba\u{7}nk" }),
+            "name must not contain control characters",
+        ),
+        (
+            json!({ "name": "Bank", "sort_order": 1000 }),
+            "sort_order must be between 0 and 999",
+        ),
+        (
+            json!({ "name": "Bank", "sort_order": -1 }),
+            "sort_order must be between 0 and 999",
+        ),
+    ] {
+        let (status, body) = app
+            .post("/api/payment-methods", Some(&token), input.clone())
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{input}");
+        assert_eq!(body, error(message), "{input}");
+    }
+
+    let (status, body) = app
+        .put(
+            "/api/payment-methods/99",
+            Some(&token),
+            json!({ "name": "Bank" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Payment method 99 not found"));
+}
+
+#[tokio::test]
+async fn payment_method_changes_are_admin_only() {
+    let app = test_app().await;
+    let tenant = app.tenant_token(1, "juan");
+    let body = json!({ "name": "Bank" });
+    let forbidden = (StatusCode::FORBIDDEN, error("Admin access required"));
+    assert_eq!(
+        app.post("/api/payment-methods", Some(&tenant), body.clone())
+            .await,
+        forbidden
+    );
+    assert_eq!(
+        app.put("/api/payment-methods/2", Some(&tenant), body.clone())
+            .await,
+        forbidden
+    );
+    assert_eq!(
+        app.delete("/api/payment-methods/2", Some(&tenant)).await,
+        forbidden
+    );
+    assert_eq!(
+        app.put_multipart(
+            "/api/payment-methods/2/image",
+            Some(&tenant),
+            payment_form(samples::PNG)
+        )
+        .await,
+        forbidden
+    );
+    assert_eq!(
+        app.delete("/api/payment-methods/2/image", Some(&tenant))
+            .await,
+        forbidden
+    );
+    let (status, _) = app.post("/api/payment-methods", None, body).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, list) = app
+        .get("/api/payment-methods", Some(&app.admin_token()))
+        .await;
+    assert_eq!(list, seeded_methods(), "nothing changed");
+}
+
+#[tokio::test]
+async fn admin_uploads_replaces_and_removes_qr_images() {
+    let app = test_app().await;
+    let token = app.admin_token();
+    app.files
+        .insert("payments/gcash.png", samples::PNG, "image/png");
+
+    let mut newer = samples::PNG.to_vec();
+    newer.extend_from_slice(b"newer");
+    let (status, body) = app
+        .put_multipart(
+            "/api/payment-methods/2/image",
+            Some(&token),
+            payment_form(&newer),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["has_image"], true);
+    let key = image_key_of(&app, "payments/");
+    assert!(
+        key.starts_with("payments/2-") && key.ends_with(".png"),
+        "a new key per upload: {key}"
+    );
+    let stored = app.files.file(&key).unwrap();
+    assert_eq!(stored.bytes, newer);
+    assert_eq!(stored.content_type.as_deref(), Some("image/png"));
+    assert_archived(&app, "payments/gcash.png", samples::PNG, "image/png");
+
+    // Tenants see the new image through the method's signed link.
+    let (status, link) = app
+        .get(
+            "/api/signed-urls/payment-methods/2",
+            Some(&app.tenant_token(1, "juan")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{link}");
+    let url = link["url"].as_str().unwrap();
+    assert!(
+        url.starts_with(&format!("http://api.test/api/files/{key}?expires=")),
+        "{url}"
+    );
+    assert_eq!(link["content_type"], "image/png");
+    let reply = app
+        .request(Method::GET, path_and_query(url), None, None)
+        .await;
+    assert_eq!(reply.body, newer);
+
+    // Removing the image archives it; the method stays.
+    let (status, body) = app
+        .delete("/api/payment-methods/2/image", Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["has_image"], false);
+    assert_archived(&app, &key, &newer, "image/png");
+    let (status, body) = app
+        .get("/api/signed-urls/payment-methods/2", Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("This payment method has no QR image"));
+}
+
+#[tokio::test]
+async fn deleting_a_payment_method_archives_its_image() {
+    let app = test_app().await;
+    let token = app.admin_token();
+    app.files
+        .insert("payments/maya.png", samples::PNG, "image/png");
+    let (status, _) = app.delete("/api/payment-methods/3", Some(&token)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_archived(&app, "payments/maya.png", samples::PNG, "image/png");
+}
+
+#[tokio::test]
+async fn qr_uploads_are_png_and_need_a_method() {
     let app = test_app().await;
     let token = app.admin_token();
 
     // The declared type is ignored.
     for bytes in [samples::JPEG, samples::WEBP, samples::EXE, b"" as &[u8]] {
         let (status, body) = app
-            .put_multipart("/api/payments/gcash", Some(&token), payment_form(bytes))
+            .put_multipart(
+                "/api/payment-methods/2/image",
+                Some(&token),
+                payment_form(bytes),
+            )
             .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body, error("Payment images must be PNG files"));
     }
-
-    for name in ["paypal", "gcash.png", "GCASH"] {
-        let (status, body) = app
-            .put_multipart(
-                &format!("/api/payments/{name}"),
-                Some(&token),
-                payment_form(samples::PNG),
-            )
-            .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}");
-        assert_eq!(
-            body,
-            error(&format!(
-                "Unknown payment method {name:?}: expected one of bpi, gcash, maya"
-            ))
-        );
-    }
-
     let (status, body) = app
         .put_multipart(
-            "/api/payments/gcash",
+            "/api/payment-methods/2/image",
             Some(&token),
             Multipart::default().field("other", "x"),
         )
@@ -1401,16 +1572,125 @@ async fn payment_uploads_are_admin_only_png_for_known_methods() {
     let mut big = samples::PNG.to_vec();
     big.resize(2 * 1024 * 1024 + 1, 0);
     let (status, body) = app
-        .put_multipart("/api/payments/gcash", Some(&token), payment_form(&big))
+        .put_multipart(
+            "/api/payment-methods/2/image",
+            Some(&token),
+            payment_form(&big),
+        )
         .await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(body, error("The upload is larger than 2 MiB"));
+
+    let (status, body) = app
+        .put_multipart(
+            "/api/payment-methods/99/image",
+            Some(&token),
+            payment_form(samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Payment method 99 not found"));
+    assert!(app.files.keys().is_empty(), "nothing was stored");
+
+    app.files.set_failing(true);
+    let (status, _) = app
+        .put_multipart(
+            "/api/payment-methods/2/image",
+            Some(&token),
+            payment_form(samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    app.files.set_failing(false);
+    let (_, list) = app.get("/api/payment-methods", Some(&token)).await;
+    assert_eq!(list, seeded_methods(), "the method still has its old key");
+}
+
+// ---------- payment images: the transitional /api/payments routes ----------
+
+#[tokio::test]
+async fn old_payment_routes_still_serve_the_seeded_methods() {
+    let app = test_app().await;
+    let token = app.admin_token();
+    app.files
+        .insert("payments/gcash.png", samples::PNG, "image/png");
+
+    let (status, body) = app.get("/api/payments", Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!([
+            { "name": "bpi", "key": "payments/bpi.png", "exists": false },
+            { "name": "gcash", "key": "payments/gcash.png", "exists": true },
+            { "name": "maya", "key": "payments/maya.png", "exists": false },
+        ])
+    );
+
+    for token in [app.admin_token(), app.tenant_token(1, "juan")] {
+        let (status, body) = app
+            .get("/api/signed-urls/payments/gcash", Some(&token))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            body["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("http://api.test/api/files/payments/gcash.png?expires="),
+            "{body}"
+        );
+    }
+
+    let (status, body) = app
+        .put_multipart(
+            "/api/payments/gcash",
+            Some(&token),
+            payment_form(samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let key = image_key_of(&app, "payments/");
+    assert_eq!(body, json!({ "name": "gcash", "key": key, "exists": true }));
+    assert_archived(&app, "payments/gcash.png", samples::PNG, "image/png");
+    let (status, body) = app
+        .get(
+            "/api/signed-urls/payments/gcash",
+            Some(&app.tenant_token(1, "juan")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["url"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("http://api.test/api/files/{key}?expires=")),
+        "the old link follows the new key: {body}"
+    );
+
+    let (status, body) = app
+        .put_multipart(
+            "/api/payments/paypal",
+            Some(&token),
+            payment_form(samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Unknown payment method \"paypal\""));
+    let (status, body) = app
+        .get("/api/signed-urls/payments/paypal", Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Payment image not found"));
+    let (status, body) = app.get("/api/signed-urls/payments/..", Some(&token)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, error("name must not contain '/', '\\' or '..'"));
+    let (status, _) = app.get("/api/signed-urls/payments/gcash", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let tenant = app.tenant_token(1, "juan");
     let (status, body) = app.get("/api/payments", Some(&tenant)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body, error("Admin access required"));
-    let (status, body) = app
+    let (status, _) = app
         .put_multipart(
             "/api/payments/gcash",
             Some(&tenant),
@@ -1418,19 +1698,6 @@ async fn payment_uploads_are_admin_only_png_for_known_methods() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body, error("Admin access required"));
-    let (status, _) = app.get("/api/payments", None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, _) = app
-        .put_multipart("/api/payments/gcash", None, payment_form(samples::PNG))
-        .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    assert!(app.files.keys().is_empty(), "nothing was stored");
-
-    app.files.set_failing(true);
-    let (status, _) = app.get("/api/payments", Some(&token)).await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]

@@ -106,9 +106,35 @@ const monthStart = (monthsAgo) =>
 
 const sql = [];
 if (process.argv.includes('--reset')) {
-  sql.push('DELETE FROM additional_charge;', 'DELETE FROM bill;', 'DELETE FROM electricity_reading;', 'DELETE FROM tenant;', 'DELETE FROM room;');
+  sql.push(
+    'DELETE FROM additional_charge;',
+    'DELETE FROM bill;',
+    'DELETE FROM electricity_reading;',
+    'DELETE FROM tenant;',
+    'DELETE FROM room;',
+    'DELETE FROM payment_method;',
+  );
   sql.push('DELETE FROM sqlite_sequence;');
 }
+// The payment methods: the three the migration seeds (their QR images are put below), with synthetic account
+// details, and one without a QR image (the tenant app's fallback tile).
+const QR_METHODS = [
+  [1, 'BPI', '0000 1234 5678', 'bpi'],
+  [2, 'GCash', '0900 000 0001', 'gcash'],
+  [3, 'Maya', '0900 000 0002', 'maya'],
+];
+for (const [id, name, number, file] of QR_METHODS) {
+  sql.push(
+    `INSERT INTO payment_method (id, name, account_name, account_number, sort_order, image_key) ` +
+      `VALUES (${id}, ${q(name)}, 'M18 Residences', ${q(number)}, ${id}, ${q(`payments/${file}.png`)}) ` +
+      `ON CONFLICT (id) DO UPDATE SET name = excluded.name, account_name = excluded.account_name, ` +
+      `account_number = excluded.account_number, sort_order = excluded.sort_order, image_key = excluded.image_key;`,
+  );
+}
+sql.push(
+  `INSERT INTO payment_method (name, account_name, account_number, sort_order) SELECT 'Sample Bank', 'M18 Residences', '0000 9876 5432', 4 ` +
+    `WHERE NOT EXISTS (SELECT 1 FROM payment_method WHERE name = 'Sample Bank' COLLATE NOCASE);`,
+);
 const receipts = [];
 const payments = [];
 let reading = 0;
@@ -154,10 +180,12 @@ try {
   const sqlFile = path.join(tmp, 'seed.sql');
   fs.writeFileSync(sqlFile, `${sql.join('\n')}\n`);
   wrangler(['d1', 'execute', DB, ...(local ? [] : ['--env', 'development']), ...target, '--file', sqlFile, '--yes']);
-  console.log(`✅ ${DB}: ${TENANTS.length} rooms, ${TENANTS.length} tenants, ${reading} readings and bills, ${charge} charges`);
+  console.log(
+    `✅ ${DB}: ${TENANTS.length} rooms, ${TENANTS.length} tenants, ${reading} readings and bills, ${charge} charges, ${QR_METHODS.length + 1} payment methods`,
+  );
 
   const put = (key, file) => wrangler(['r2', 'object', 'put', `${BUCKET}/${key}`, '--file', file, '--content-type', 'image/png', ...target]);
-  for (const [i, name] of ['bpi', 'gcash', 'maya'].entries()) {
+  for (const [i, [, , , name]] of QR_METHODS.entries()) {
     const file = path.join(tmp, `${name}.png`);
     fs.writeFileSync(file, fakeQr(i));
     put(`payments/${name}.png`, file);

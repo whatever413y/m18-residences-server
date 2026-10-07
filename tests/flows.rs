@@ -344,17 +344,33 @@ async fn export_contract_fixtures() {
         .post("/api/auth/login", None, json!({ "name": TENANT_NAME }))
         .await;
     assert_eq!(status, StatusCode::OK);
-    app.files
-        .insert("payments/gcash.png", samples::PNG, "image/png");
+    let admin = token_of(&flow.admin);
+    let (status, payment_method) = app
+        .post(
+            "/api/payment-methods",
+            Some(&admin),
+            json!({ "name": "Test Bank", "account_name": "Test Owner", "account_number": "0000 1111 2222" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{payment_method}");
+    let id = payment_method["id"].clone();
+    let (status, uploaded) = app
+        .put_multipart(
+            &format!("/api/payment-methods/{id}/image"),
+            Some(&admin),
+            Multipart::default().file("file", "qr.png", "image/png", samples::PNG),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
     let (status, signed_url) = app
         .get(
-            "/api/signed-urls/payments/gcash",
-            Some(&token_of(&flow.admin)),
+            &format!("/api/signed-urls/payment-methods/{id}"),
+            Some(&admin),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{signed_url}");
-    let (status, payments) = app.get("/api/payments", Some(&token_of(&flow.admin))).await;
-    assert_eq!(status, StatusCode::OK, "{payments}");
+    let (status, payment_methods) = app.get("/api/payment-methods", Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{payment_methods}");
     let _ = flow.tenant_bills;
 
     std::fs::create_dir_all(&out_dir).unwrap();
@@ -368,7 +384,8 @@ async fn export_contract_fixtures() {
         ("bills.json", flow.bills),
         ("latest_bill.json", flow.latest_bill),
         ("signed_url.json", signed_url),
-        ("payments.json", payments),
+        ("payment_method.json", payment_method),
+        ("payment_methods.json", payment_methods),
     ];
     for (name, mut value) in fixtures {
         redact(&mut value);

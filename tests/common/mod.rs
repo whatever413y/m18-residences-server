@@ -13,11 +13,13 @@ use axum::{
 };
 use chrono::Utc;
 use m18_residences_db::entities::{bill, electricity_reading, room, tenant};
-use m18_residences_server::app::{AppState, app};
+use m18_residences_server::app::{AppState, LoginGuards, app};
 use m18_residences_shared_rs::{
     auth::{ADMIN_ROLE, Claims},
+    captcha::FakeCaptcha,
     config::Config,
     files::MemoryFileStore,
+    rate_limit::MemoryRateLimiter,
 };
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
 use serde_json::Value;
@@ -28,6 +30,8 @@ pub const ADMIN_USERNAME: &str = "test-admin";
 pub const ADMIN_PASSWORD: &str = "test-password";
 pub const ADMIN_ORIGIN: &str = "http://localhost:50001";
 pub const TENANT_ORIGIN: &str = "http://localhost:50002";
+/// Login attempts each client may make per login route in tests (as in production).
+pub const LOGIN_LIMIT: u32 = 10;
 
 pub fn test_config() -> Config {
     Config::from_lookup(|name| {
@@ -39,6 +43,7 @@ pub fn test_config() -> Config {
                 "ALLOWED_ORIGINS" => {
                     "http://localhost:50001,http://localhost:50002,https://*-admin.preview.test"
                 }
+                "TURNSTILE_SECRET" => "test-turnstile-secret",
                 _ => return None,
             }
             .to_string(),
@@ -51,6 +56,8 @@ pub struct TestApp {
     pub router: Router,
     pub state: AppState,
     pub files: Arc<MemoryFileStore>,
+    pub limiter: Arc<MemoryRateLimiter>,
+    pub captcha: Arc<FakeCaptcha>,
 }
 
 /// A response: status, headers and raw body.
@@ -81,9 +88,16 @@ pub async fn test_app() -> TestApp {
         .await
         .expect("in-memory database");
     let files = Arc::new(MemoryFileStore::default());
+    let limiter = Arc::new(MemoryRateLimiter::new(LOGIN_LIMIT));
+    let captcha = Arc::new(FakeCaptcha::default());
+    let login_guards = LoginGuards {
+        limiter: limiter.clone(),
+        captcha: captcha.clone(),
+    };
     let state = AppState::new(
         db,
         files.clone(),
+        login_guards,
         test_config(),
         Some("test-version".into()),
     );
@@ -91,6 +105,8 @@ pub async fn test_app() -> TestApp {
         router: app(state.clone()),
         state,
         files,
+        limiter,
+        captcha,
     }
 }
 
@@ -107,10 +123,26 @@ impl TestApp {
         token: Option<&str>,
         body: Option<(&str, Vec<u8>)>,
     ) -> Reply {
+        self.request_with_headers(method, uri, token, body, &[])
+            .await
+    }
+
+    /// [`TestApp::request`] with extra headers (e.g. `cf-connecting-ip`).
+    pub async fn request_with_headers(
+        &self,
+        method: Method,
+        uri: &str,
+        token: Option<&str>,
+        body: Option<(&str, Vec<u8>)>,
+        headers: &[(&str, &str)],
+    ) -> Reply {
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
             .header(header::HOST, "api.test");
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
         if let Some(token) = token {
             request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
         }

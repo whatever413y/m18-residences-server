@@ -8,18 +8,22 @@ use axum::{
     },
     http::StatusCode,
 };
+use chrono::NaiveDate;
 use m18_residences_shared_rs::{
     auth::{Admin, AuthUser},
     error::ApiError,
-    extract::{ValidJson, ValidPath},
+    extract::{ValidJson, ValidPath, ValidQuery},
 };
 use serde::Deserialize;
 
 use crate::{
     app::AppState,
-    billing::services::bill_service::{
-        self, AdditionalChargeInput, BillInput, BillWithChargesAndReading, PaymentUpload,
-        ReceiptUpload,
+    billing::{
+        repository::bill_repo::BillFilter,
+        services::bill_service::{
+            self, AdditionalChargeInput, BillInput, BillWithChargesAndReading, PaymentUpload,
+            ReceiptUpload,
+        },
     },
 };
 
@@ -60,14 +64,41 @@ pub struct TenantId {
     pub tenant_id: i32,
 }
 
-/// GET /api/bills (admin)
+/// `GET /api/bills` filters; all optional, every one given must match.
+#[derive(Deserialize)]
+pub struct BillQuery {
+    /// `YYYY-MM-DD`: bills created on or after it, plus every bill without a receipt.
+    pub since: Option<NaiveDate>,
+    /// Bills created in this year.
+    pub year: Option<i32>,
+    pub tenant_id: Option<i32>,
+    /// Bills whose reading is in this room.
+    pub room_id: Option<i32>,
+}
+
+/// GET /api/bills (admin): every bill, or those matching the query's filters.
 pub async fn get_bills(
     State(state): State<AppState>,
     _admin: Admin,
+    ValidQuery(query): ValidQuery<BillQuery>,
 ) -> Result<Json<Vec<BillWithChargesAndReading>>, ApiError> {
+    let filter = BillFilter {
+        since: query.since,
+        year: query.year,
+        tenant_id: query.tenant_id,
+        room_id: query.room_id,
+    };
     Ok(Json(
-        bill_service::get_all_bills_with_details(&state.db).await?,
+        bill_service::get_bills_with_details(&state.db, &filter).await?,
     ))
+}
+
+/// GET /api/bills/years (admin): the years bills were created in, newest first.
+pub async fn get_bill_years(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> Result<Json<Vec<i32>>, ApiError> {
+    Ok(Json(bill_service::get_bill_years(&state.db).await?))
 }
 
 /// GET /api/bills/{tenant_id}/bill (admin or that tenant)

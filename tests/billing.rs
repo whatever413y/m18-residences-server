@@ -3,14 +3,21 @@
 mod common;
 
 use axum::http::{Method, StatusCode, header};
+use std::sync::Arc;
+
 use common::{
     Multipart, TestApp, samples, seed_bill, seed_reading, seed_room, seed_tenant, test_app,
+    test_config,
 };
 use m18_residences_db::entities::{bill, electricity_reading, room, tenant};
+use m18_residences_server::app::AppState;
 use m18_residences_server::billing::repository::{
     additional_charge_repo, bill_repo, reading_read_repo, tenant_read_repo,
 };
-use m18_residences_shared_rs::files::FileSigner;
+use m18_residences_shared_rs::files::{
+    FileError, FileInfo, FileSigner, FileStore, MemoryFileStore, StoredFile,
+};
+use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
 use serde_json::{Value, json};
 
 const ROOM_NAME: &str = "Room 101";
@@ -346,63 +353,90 @@ async fn bills_update_through_json_and_multipart_then_delete() {
     assert_eq!(body, error(&format!("Bill {bill_id} not found")));
 }
 
+/// Gives bill `bill_id` the receipt `receipt` stored at `key` directly in the database, as an
+/// earlier upload would have (`key: None`: a bill from before keys were recorded).
+async fn set_receipt(app: &TestApp, bill_id: i64, receipt: &str, key: Option<&str>) {
+    let bill = bill_repo::get_by_id(app.db(), bill_id as i32)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut bill = bill.into_active_model();
+    bill.receipt_url = Set(Some(receipt.into()));
+    bill.receipt_key = Set(key.map(Into::into));
+    bill.paid = Set(true);
+    bill.update(app.db()).await.unwrap();
+}
+
 #[tokio::test]
-async fn receipt_url_sets_paid_and_an_empty_one_means_no_receipt() {
+async fn a_json_update_can_only_keep_or_clear_the_receipt() {
     let app = test_app().await;
     let w = world(&app).await;
     let token = app.admin_token();
     let created = create_bill(&app, &w).await;
-    let uri = format!("/api/bills/{}", created["bill"]["id"]);
+    let bill_id = created["bill"]["id"].as_i64().unwrap();
+    let uri = format!("/api/bills/{bill_id}");
+    set_receipt(
+        &app,
+        bill_id,
+        "1700000000-r1",
+        Some("receipts/x/1700000000-r1"),
+    )
+    .await;
 
+    // Keeping it: the same name.
     let mut body = bill_body(&w, w.reading.id);
     body["receipt_url"] = json!("1700000000-r1");
     let (status, updated) = app.put(&uri, Some(&token), body.clone()).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{updated}");
     assert_eq!(updated["bill"]["receipt_url"], "1700000000-r1");
     assert_eq!(updated["bill"]["paid"], true);
+    // The key is the server's own: never sent.
+    assert!(updated["bill"].get("receipt_key").is_none(), "{updated}");
 
+    // Any other name: a new receipt only comes with an upload.
+    for other in ["1700000001-r1", "../../tenant-payments/x/y"] {
+        body["receipt_url"] = json!(other);
+        let (status, body) = app.put(&uri, Some(&token), body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{other}");
+        assert_eq!(
+            body,
+            error(
+                "receipt_url can only keep or clear the bill's receipt; upload a new receipt instead"
+            )
+        );
+    }
+    // The same through the multipart form without a file.
+    let upload = format!("{uri}/upload");
+    let (status, _) = app
+        .put_multipart(
+            &upload,
+            Some(&token),
+            upload_form(&w, w.reading.id).field("receipt_url", "other"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Clearing it: empty, or omitted (as before).
     body["receipt_url"] = json!("");
     let (_, updated) = app.put(&uri, Some(&token), body.clone()).await;
     assert_eq!(updated["bill"]["receipt_url"], Value::Null);
     assert_eq!(updated["bill"]["paid"], false);
+    let stored = bill_repo::get_by_id(app.db(), bill_id as i32)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.receipt_key, None);
 
-    // Omitted: no receipt (as before).
-    body["receipt_url"] = json!("x");
-    app.put(&uri, Some(&token), body.clone()).await;
+    set_receipt(
+        &app,
+        bill_id,
+        "1700000000-r1",
+        Some("receipts/x/1700000000-r1"),
+    )
+    .await;
     body.as_object_mut().unwrap().remove("receipt_url");
     let (_, updated) = app.put(&uri, Some(&token), body).await;
     assert_eq!(updated["bill"]["paid"], false);
-
-    // Multipart without a file: the receipt_url field behaves the same.
-    let upload = format!("{uri}/upload");
-    let (status, updated) = app
-        .put_multipart(
-            &upload,
-            Some(&token),
-            upload_form(&w, w.reading.id).field("receipt_url", "1700000000-r1"),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{updated}");
-    assert_eq!(updated["bill"]["paid"], true);
-    assert_eq!(updated["bill"]["receipt_url"], "1700000000-r1");
-    let (_, updated) = app
-        .put_multipart(
-            &upload,
-            Some(&token),
-            upload_form(&w, w.reading.id).field("receipt_url", ""),
-        )
-        .await;
-    assert_eq!(updated["bill"]["paid"], false);
-    assert_eq!(updated["bill"]["receipt_url"], Value::Null);
-
-    // A new bill never starts with a receipt.
-    let reading = seed_reading(app.db(), &w.tenant, 150, 180).await;
-    let mut body = bill_body(&w, reading.id);
-    body["receipt_url"] = json!("ignored");
-    let (status, created) = app.post("/api/bills", Some(&token), body).await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created["bill"]["paid"], false);
-    assert_eq!(created["bill"]["receipt_url"], Value::Null);
 }
 
 #[tokio::test]
@@ -845,12 +879,16 @@ async fn upload_validates_every_field_before_storing() {
         error("receipt_file must be a file part with a filename")
     );
 
-    // The tenant must exist before anything is stored.
+    // The tenant and the reading are checked before anything is stored.
     let mut form = upload_form(&w, w.reading.id);
     form = form.field("tenant_id", 999);
     let (status, body) = app.put_multipart(&upload, Some(&token), file(form)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body, error("Tenant 999 not found"));
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, error("Tenant 999 does not exist"));
+    let form = upload_form(&w, w.reading.id).field("reading_id", 999);
+    let (status, body) = app.put_multipart(&upload, Some(&token), file(form)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, error("Reading 999 does not exist"));
 
     // Not multipart at all.
     let reply = app
@@ -976,17 +1014,7 @@ async fn with_stored_receipt(app: &TestApp, w: &World, bill_id: &Value) -> (Stri
     let receipt = format!("1700000000-r{}", w.reading.id);
     let key = format!("receipts/{TENANT_NAME}/{receipt}");
     app.files.insert(&key, samples::JPEG, "image/jpeg");
-    let mut body = bill_body(w, w.reading.id);
-    body["receipt_url"] = json!(receipt);
-    let (status, updated) = app
-        .put(
-            &format!("/api/bills/{bill_id}"),
-            Some(&app.admin_token()),
-            body,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{updated}");
-    assert_eq!(updated["bill"]["receipt_url"], json!(receipt));
+    set_receipt(app, bill_id.as_i64().unwrap(), &receipt, Some(&key)).await;
     (receipt, key)
 }
 
@@ -1090,23 +1118,23 @@ async fn a_receipt_another_bill_still_has_is_kept() {
     let bill_id = created["bill"]["id"].clone();
     let (receipt, key) = with_stored_receipt(&app, &w, &bill_id).await;
 
-    // A second bill of the same tenant given the same receipt by hand (the JSON API allows it).
+    // A second bill sharing the receipt (possible when the JSON API still set receipts by hand).
     let second_reading = seed_reading(app.db(), &w.tenant, 150, 200).await;
-    let mut body = bill_body(&w, second_reading.id);
-    body["receipt_url"] = json!(receipt);
     let (status, second) = app
-        .post("/api/bills", Some(&app.admin_token()), body.clone())
-        .await;
-    assert_eq!(status, StatusCode::CREATED, "{second}");
-    let second_id = second["bill"]["id"].clone();
-    let (status, _) = app
-        .put(
-            &format!("/api/bills/{second_id}"),
+        .post(
+            "/api/bills",
             Some(&app.admin_token()),
-            body,
+            bill_body(&w, second_reading.id),
         )
         .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    set_receipt(
+        &app,
+        second["bill"]["id"].as_i64().unwrap(),
+        &receipt,
+        Some(&key),
+    )
+    .await;
 
     let (status, _) = app
         .delete(&format!("/api/bills/{bill_id}"), Some(&app.admin_token()))
@@ -1686,7 +1714,13 @@ async fn bill_repo_reads_and_writes() {
         bills.iter().map(|b| b.id).collect::<Vec<_>>(),
         [second.id, first.id]
     );
-    assert_eq!(bill_repo::get_all(app.db()).await.unwrap().len(), 2);
+    assert_eq!(
+        bill_repo::get_filtered(app.db(), &Default::default())
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
     assert!(
         bill_repo::get_all_by_tenant_id(app.db(), 999)
             .await
@@ -2122,4 +2156,391 @@ async fn payment_links_follow_the_permission_table() {
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+// ---------- files by bill id (stored keys) ----------
+
+/// Uploads a receipt and a payment image to bill `bill_id`; returns the bill after both.
+async fn with_both_files(app: &TestApp, w: &World, bill_id: &Value) -> Value {
+    let form =
+        upload_form(w, w.reading.id).file("receipt_file", "r.png", "image/png", samples::PNG);
+    let (status, _) = app
+        .put_multipart(
+            &format!("/api/bills/{bill_id}/upload"),
+            Some(&app.admin_token()),
+            form,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, bill) =
+        upload_payment(app, bill_id, Some(&app.admin_token()), samples::JPEG).await;
+    assert_eq!(status, StatusCode::OK, "{bill}");
+    bill
+}
+
+/// The file a bill-id link resolves to: the status, the link's body and the file's bytes.
+async fn bill_file(
+    app: &TestApp,
+    bill_id: &Value,
+    kind: &str,
+    token: &str,
+) -> (StatusCode, Value, Vec<u8>) {
+    let (status, body) = app
+        .get(
+            &format!("/api/signed-urls/bills/{bill_id}/{kind}"),
+            Some(token),
+        )
+        .await;
+    if status != StatusCode::OK {
+        return (status, body, Vec::new());
+    }
+    let reply = app
+        .request(
+            Method::GET,
+            path_and_query(body["url"].as_str().unwrap()),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK);
+    (status, body, reply.body)
+}
+
+#[tokio::test]
+async fn bill_file_links_follow_the_stored_keys() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    with_both_files(&app, &w, &bill_id).await;
+    let stored = bill_repo::get_by_id(app.db(), bill_id.as_i64().unwrap() as i32)
+        .await
+        .unwrap()
+        .unwrap();
+    let receipt_key = stored
+        .receipt_key
+        .clone()
+        .expect("the receipt's key is recorded");
+    let payment_key = stored
+        .payment_key
+        .clone()
+        .expect("the payment's key is recorded");
+    assert!(
+        receipt_key.starts_with(&format!("receipts/{TENANT_NAME}/")),
+        "{receipt_key}"
+    );
+    assert!(
+        payment_key.starts_with(&format!("tenant-payments/{TENANT_NAME}/")),
+        "{payment_key}"
+    );
+
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+    for token in [app.admin_token(), own.clone()] {
+        let (status, body, bytes) = bill_file(&app, &bill_id, "receipt", &token).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["content_type"], "image/png");
+        assert_eq!(bytes, samples::PNG);
+        let (_, body, bytes) = bill_file(&app, &bill_id, "payment", &token).await;
+        assert_eq!(body["content_type"], "image/jpeg");
+        assert_eq!(bytes, samples::JPEG);
+    }
+
+    // Renaming the tenant no longer loses the files.
+    let mut tenant = w.tenant.clone().into_active_model();
+    tenant.name = Set("Juan D. Cruz".into());
+    tenant.update(app.db()).await.unwrap();
+    let (status, _, bytes) = bill_file(&app, &bill_id, "receipt", &own).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, samples::PNG);
+}
+
+#[tokio::test]
+async fn bill_file_links_follow_the_permission_table() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+
+    // No file yet.
+    let (status, body, _) = bill_file(&app, &bill_id, "receipt", &own).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Receipt not found"));
+    let (status, body, _) = bill_file(&app, &bill_id, "payment", &own).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Payment image not found"));
+
+    with_both_files(&app, &w, &bill_id).await;
+    let other = app.tenant_token(w.tenant.id + 1, "OTHER");
+    let (status, _, _) = bill_file(&app, &bill_id, "receipt", &other).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another tenant's token with this tenant's name is still someone else.
+    let impostor = app.tenant_token(w.tenant.id + 1, TENANT_NAME);
+    let (status, _, _) = bill_file(&app, &bill_id, "payment", &impostor).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body, _) = bill_file(&app, &json!(999), "receipt", &app.admin_token()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Bill 999 not found"));
+    let (status, _) = app
+        .get(
+            &format!("/api/signed-urls/bills/{bill_id}/statement"),
+            Some(&own),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = app
+        .get(&format!("/api/signed-urls/bills/{bill_id}/receipt"), None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn bills_without_a_recorded_key_fall_back_to_the_tenant_name() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let key = format!("receipts/{TENANT_NAME}/1700000000-r1");
+    app.files.insert(&key, samples::PNG, "image/png");
+    set_receipt(&app, bill_id.as_i64().unwrap(), "1700000000-r1", None).await;
+
+    let (status, _, bytes) = bill_file(&app, &bill_id, "receipt", &app.admin_token()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, samples::PNG);
+    // Archived by that key too once cleared.
+    let (status, _) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&app.admin_token()),
+            bill_body(&w, w.reading.id),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_archived(&app, &key, samples::PNG, "image/png");
+}
+
+#[tokio::test]
+async fn files_stay_with_a_bill_moved_to_another_tenant() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let before = with_both_files(&app, &w, &bill_id).await;
+    let other = seed_tenant(app.db(), w.room.id, "PEDRO").await;
+
+    let mut body = bill_body(&w, w.reading.id);
+    body["tenant_id"] = json!(other.id);
+    body["receipt_url"] = before["bill"]["receipt_url"].clone();
+    let (status, moved) = app
+        .put(
+            &format!("/api/bills/{bill_id}"),
+            Some(&app.admin_token()),
+            body,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+
+    let pedro = app.tenant_token(other.id, "PEDRO");
+    for kind in ["receipt", "payment"] {
+        let (status, _, bytes) = bill_file(&app, &bill_id, kind, &pedro).await;
+        assert_eq!(status, StatusCode::OK, "{kind}");
+        assert!(!bytes.is_empty());
+    }
+    let juan = app.tenant_token(w.tenant.id, TENANT_NAME);
+    let (status, _, _) = bill_file(&app, &bill_id, "receipt", &juan).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+// ---------- a receipt attached while a tenant uploads ----------
+
+/// A file store that gives bill `bill_id` a receipt while a file is being stored, as an admin
+/// attaching one at that moment would.
+struct ReceiptDuringPut {
+    inner: MemoryFileStore,
+    db: sea_orm::DatabaseConnection,
+    bill_id: i32,
+}
+
+#[async_trait::async_trait]
+impl FileStore for ReceiptDuringPut {
+    async fn put(&self, key: &str, bytes: Vec<u8>, content_type: &str) -> Result<(), FileError> {
+        self.inner.put(key, bytes, content_type).await?;
+        let bill = bill_repo::get_by_id(&self.db, self.bill_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut bill = bill.into_active_model();
+        bill.receipt_url = Set(Some("1700000000-r1".into()));
+        bill.paid = Set(true);
+        bill.update(&self.db).await.unwrap();
+        Ok(())
+    }
+    async fn get(&self, key: &str) -> Result<Option<StoredFile>, FileError> {
+        self.inner.get(key).await
+    }
+    async fn head(&self, key: &str) -> Result<Option<FileInfo>, FileError> {
+        self.inner.head(key).await
+    }
+    async fn delete(&self, key: &str) -> Result<(), FileError> {
+        self.inner.delete(key).await
+    }
+}
+
+#[tokio::test]
+async fn a_receipt_attached_during_a_tenant_upload_wins() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].as_i64().unwrap() as i32;
+
+    let store = Arc::new(ReceiptDuringPut {
+        inner: MemoryFileStore::default(),
+        db: app.db().clone(),
+        bill_id,
+    });
+    let state = AppState::new(
+        app.state.db.clone(),
+        store.clone(),
+        app.state.login_guards.clone(),
+        test_config(),
+        None,
+    );
+    let router = m18_residences_server::app::app(state);
+    let (content_type, body) = payment_proof_form(samples::JPEG).encode();
+    let request = axum::http::Request::builder()
+        .method(Method::PUT)
+        .uri(format!("/api/bills/{bill_id}/payment"))
+        .header(header::HOST, "api.test")
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", app.tenant_token(w.tenant.id, TENANT_NAME)),
+        )
+        .header(header::CONTENT_TYPE, content_type)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(router, request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let stored = bill_repo::get_by_id(app.db(), bill_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.payment_url, None, "the payment was not attached");
+    assert!(
+        store.inner.keys().is_empty(),
+        "and its file was removed: {:?}",
+        store.inner.keys()
+    );
+}
+
+// ---------- the bill list's filters ----------
+
+/// Sets bill `id`'s creation time.
+async fn set_created_at(app: &TestApp, id: i32, at: &str) {
+    let bill = bill_repo::get_by_id(app.db(), id).await.unwrap().unwrap();
+    let mut bill = bill.into_active_model();
+    bill.created_at = Set(chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S").unwrap());
+    bill.update(app.db()).await.unwrap();
+}
+
+async fn listed(app: &TestApp, query: &str) -> Vec<i64> {
+    let (status, body) = app
+        .get(&format!("/api/bills{query}"), Some(&app.admin_token()))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{query}: {body}");
+    body.as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["bill"]["id"].as_i64().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn bills_are_filtered_by_date_year_tenant_and_room() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let room2 = seed_room(app.db(), "Room 102", 4000).await;
+    let pedro = seed_tenant(app.db(), room2.id, "PEDRO").await;
+    let mut ids = Vec::new();
+    // Juan in room 101: 2024 paid, 2025 open, 2026 paid; Pedro in room 102: 2026 open.
+    for (tenant, at, paid) in [
+        (&w.tenant, "2024-03-02 01:00:00", true),
+        (&w.tenant, "2025-06-01 01:00:00", false),
+        (&w.tenant, "2026-02-01 01:00:00", true),
+        (&pedro, "2026-03-01 01:00:00", false),
+    ] {
+        let reading = seed_reading(app.db(), tenant, 1, 2).await;
+        let bill = seed_bill(app.db(), &reading, 100, 10).await;
+        set_created_at(&app, bill.id, at).await;
+        if paid {
+            set_receipt(&app, bill.id.into(), "r", Some("receipts/x/r")).await;
+        }
+        ids.push(i64::from(bill.id));
+    }
+    let [old_paid, old_open, new_paid, pedro_open] = ids[..] else {
+        unreachable!()
+    };
+
+    assert_eq!(
+        listed(&app, "").await,
+        [pedro_open, new_paid, old_open, old_paid]
+    );
+    // Since: recent bills plus every open one.
+    assert_eq!(
+        listed(&app, "?since=2026-01-01").await,
+        [pedro_open, new_paid, old_open]
+    );
+    assert_eq!(
+        listed(&app, "?since=2026-02-01").await,
+        [pedro_open, new_paid, old_open]
+    );
+    assert_eq!(
+        listed(&app, "?since=2026-02-02").await,
+        [pedro_open, old_open]
+    );
+    assert_eq!(listed(&app, "?year=2024").await, [old_paid]);
+    assert_eq!(listed(&app, "?year=2026").await, [pedro_open, new_paid]);
+    assert_eq!(listed(&app, "?year=1999").await, Vec::<i64>::new());
+    assert_eq!(
+        listed(&app, &format!("?tenant_id={}", w.tenant.id)).await,
+        [new_paid, old_open, old_paid]
+    );
+    assert_eq!(
+        listed(&app, &format!("?room_id={}", room2.id)).await,
+        [pedro_open]
+    );
+    assert_eq!(
+        listed(&app, &format!("?year=2026&room_id={}", w.room.id)).await,
+        [new_paid]
+    );
+
+    let (status, years) = app.get("/api/bills/years", Some(&app.admin_token())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(years, json!([2026, 2025, 2024]));
+}
+
+#[tokio::test]
+async fn bad_bill_filters_are_400_and_the_lists_are_admin_only() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    for query in [
+        "?since=2026-13-01",
+        "?since=yesterday",
+        "?year=twenty",
+        "?tenant_id=x",
+    ] {
+        let (status, body) = app
+            .get(&format!("/api/bills{query}"), Some(&app.admin_token()))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
+        assert!(body["error"].is_string(), "{body}");
+    }
+    let tenant = app.tenant_token(w.tenant.id, TENANT_NAME);
+    for uri in ["/api/bills?since=2026-01-01", "/api/bills/years"] {
+        let (status, _) = app.get(uri, Some(&tenant)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}");
+    }
+    let (_, years) = app.get("/api/bills/years", Some(&app.admin_token())).await;
+    assert_eq!(years, json!([]));
 }

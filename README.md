@@ -42,9 +42,12 @@ curl http://localhost:50000/health                                  # {"status":
 Local D1 and R2 live in `.wrangler/` (gitignored). The Flutter apps run on ports 50001 (admin) and 50002 (tenant),
 the origins `.dev.vars` allows.
 
-Configuration: `ALLOWED_ORIGINS` (comma-separated), `JWT_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`. If any is
-missing, every request fails with a 500 that names it. In production `ALLOWED_ORIGINS` is in `wrangler.jsonc`,
-the others are Worker secrets (`npx wrangler@4.145.0 secret put <NAME>`).
+Configuration: `ALLOWED_ORIGINS` (comma-separated), `JWT_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
+`TURNSTILE_SECRET` (the Turnstile widget's secret; locally Cloudflare's always-pass test secret, see
+`.dev.vars.example`). If any is missing, every request fails with a 500 that names it. In production
+`ALLOWED_ORIGINS` is in `wrangler.jsonc`, the others are Worker secrets (`npx wrangler@4.145.0 secret put <NAME>`).
+The binding `LOGIN_RATE_LIMITER` (Workers Rate Limiting, in `wrangler.jsonc`) limits the logins; `wrangler dev`
+simulates it locally.
 
 ## Database
 
@@ -73,8 +76,8 @@ The cost grows with the number of rows. Most of it is D1 building the row object
 not our code. The D1 adapter (`crates/db/src/d1.rs`) reads rows without per-row maps, looks up column types once per
 query and parses timestamps by hand. Two alternatives were measured and not adopted: `JSON.stringify` +
 `TextEncoder` + serde_json (faster at 1,150 bills, slower at 500), and D1's `raw()` (more CPU inside D1's own
-JavaScript). The lever left is to load fewer rows per request (paging, or one year at a time in the admin billing
-page).
+JavaScript). So the admin app loads fewer rows: `GET /api/bills?since=…` (the last 12 months plus every open bill),
+and a year, tenant or room only when the Billing page asks for it (indexes in migration 0005).
 
 ## Tests
 
@@ -96,25 +99,44 @@ $env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fi
 | Route | Who |
 |---|---|
 | `GET /`, `GET /health` (`{status, version}`) | anyone |
-| `POST /api/auth/admin-login`, `/login` (tenant, by name), `/validate-token` | anyone |
+| `POST /api/auth/admin-login`, `/login` (tenant, by name in any case), `/validate-token` | anyone |
 | `GET /api/files/{*key}` | anyone with a valid signed link (10 minutes) |
 | `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
-| `GET /api/signed-urls/receipts/{name}/{file}`, `GET /api/signed-urls/tenant-payments/{name}/{file}` | admin, or the tenant with that name |
+| `GET /api/signed-urls/bills/{id}/receipt`, `GET /api/signed-urls/bills/{id}/payment` | admin, or the bill's tenant |
+| `GET /api/signed-urls/receipts/{name}/{file}`, `GET /api/signed-urls/tenant-payments/{name}/{file}` (transitional, until both apps use the bill-id links) | admin, or the tenant with that name |
 | `PUT /api/bills/{id}/payment` | admin, or the bill's tenant until the bill has a receipt (then 409) |
 | `GET /api/payment-methods`, `GET /api/signed-urls/payment-methods/{id}` | any logged-in user |
 | everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payment-methods` | admin |
 
 Errors are JSON `{"error": "..."}` (403 for a tenant token on an admin route, 409 for a conflict, 404 for a
-missing record). Bills come back as `{bill, additional_charges, reading}`.
+missing record). JSON bodies are at most 64 KiB (413); uploads have their own limits. Bills come back as
+`{bill, additional_charges, reading}`.
+
+Logins: both take an optional `turnstile_token` (Cloudflare Turnstile; required once both apps send it). Before the
+credentials are checked: at most 10 attempts a minute per client IP and login (`429` with `Retry-After: 60`; if the
+limiter itself fails, the attempt goes through and is logged), then the token if sent (`400` "Verification
+failed. Please try again."; `503` if Cloudflare can't be reached: logins fail closed). Tenants log in with their
+name in any case, without surrounding spaces; names are unique in any case (migration 0006), trimmed, 1–64
+characters, without control characters, `/`, `\` or `..`.
+
+Bills: `GET /api/bills` returns every bill, or with `?since=YYYY-MM-DD` (created on or after that day, plus every
+bill without a receipt), `year=`, `tenant_id=`, `room_id=` (all that are given must match; a bad value is a 400);
+`GET /api/bills/years` lists the years with bills, newest first. Readings must not be negative or go down (400).
 
 Receipts: `PUT /api/bills/{id}/upload` (multipart, at most 10 MiB) accepts JPEG, PNG, WebP, GIF, AVIF and PDF,
-checked by their bytes. The admin app converts photos to WebP before uploading. Once a bill no longer points at a
-receipt (replaced, cleared, or the bill deleted), that file is moved to `archive/<key>` in R2 (copied, then the
-original deleted; kept forever), after the database write; a failed archive is logged and leaves the file at its key.
+checked by their bytes, and stores `receipts/<tenant name>/<unix ts>-r<reading id>` after the bill, tenant and
+reading are checked. The admin app converts photos to WebP before uploading. Each bill records the full key of its
+receipt and payment image (`receipt_key`, `payment_key`; migration 0004, never sent to clients), so renaming a
+tenant or moving a bill keeps its files; the bill-id links use them. A JSON update's `receipt_url` may only keep or
+clear the receipt (400 otherwise). Once a bill no longer points at a receipt (replaced, cleared, or the bill
+deleted), that file is moved to `archive/<key>` in R2 (copied, then the original deleted; kept forever), after the
+database write; a failed archive is logged and leaves the file at its key.
 
 Payment images (the tenant's proof of payment, optional): `PUT /api/bills/{id}/payment` (multipart part
 `payment_file`, at most 10 MiB, the same types as receipts) stores `tenant-payments/<tenant name>/<unix ts>-r<reading id>`
-and sets only the bill's `payment_url`; `DELETE /api/bills/{id}/payment` (admin) clears it. The replaced or cleared
+and sets only the bill's `payment_url` (for a tenant only while the bill has no receipt, checked in the same
+statement; a receipt attached meanwhile wins with a 409 and the upload is removed); `DELETE /api/bills/{id}/payment`
+(admin) clears it. The replaced or cleared
 file, and a deleted bill's, is archived the same way (`archive/tenant-payments/...`) after the database write. `paid` still means "has a receipt"; the
 apps show **Unpaid** (neither), **For verification** (payment, no receipt) or **Paid** (receipt).
 

@@ -9,10 +9,19 @@ fn not_found(id: i32) -> ApiError {
     ApiError::NotFound(format!("Reading {id} not found"))
 }
 
-/// consumption = curr - prev (negative when the meter went down, as before; 400 if it overflows).
+/// consumption = curr - prev. Meter values are never negative and never go down (400).
 pub fn calculate_consumption(prev: i32, curr: i32) -> Result<i32, ApiError> {
-    curr.checked_sub(prev)
-        .ok_or_else(|| ApiError::BadRequest("curr_reading - prev_reading is out of range".into()))
+    if prev < 0 || curr < 0 {
+        return Err(ApiError::BadRequest(
+            "prev_reading and curr_reading must not be negative".into(),
+        ));
+    }
+    if curr < prev {
+        return Err(ApiError::BadRequest(
+            "curr_reading must not be below prev_reading".into(),
+        ));
+    }
+    Ok(curr - prev)
 }
 
 /// Sets `consumption` from the `prev_reading` and `curr_reading` the handler set.

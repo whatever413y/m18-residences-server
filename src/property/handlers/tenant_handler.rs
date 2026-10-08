@@ -9,7 +9,7 @@ use sea_orm::ActiveValue::Set;
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::property::handlers::{IdParam, require_name};
+use crate::property::handlers::{IdParam, tenant_name};
 use crate::property::services::tenant_service;
 use m18_residences_shared_rs::extract::{ValidJson, ValidPath};
 
@@ -25,9 +25,8 @@ pub struct TenantInput {
 
 impl TenantInput {
     fn into_active_model(self) -> Result<tenant::ActiveModel, ApiError> {
-        require_name(&self.name)?;
         Ok(tenant::ActiveModel {
-            name: Set(self.name),
+            name: Set(tenant_name(&self.name)?),
             room_id: Set(self.room_id),
             join_date: Set(self.join_date),
             is_active: Set(self.is_active.unwrap_or(true)),

@@ -76,6 +76,17 @@ pub async fn tenant_payment_link(
     link(files, signer, origin, &key, "Payment image not found").await
 }
 
+/// A link to a bill's receipt or payment image stored at `key`.
+pub async fn bill_file_link(
+    files: &dyn FileStore,
+    signer: &FileSigner,
+    origin: &str,
+    key: &str,
+    not_found: &str,
+) -> Result<SignedUrl, ApiError> {
+    link(files, signer, origin, key, not_found).await
+}
+
 /// A link to a payment method's QR image stored at `key`.
 pub async fn payment_method_link(
     files: &dyn FileStore,

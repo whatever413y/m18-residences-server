@@ -10,8 +10,8 @@ use crate::{
     app::AppState,
     billing::handlers::bill_handler::{
         UPLOAD_LIMIT_BYTES, clear_payment_handler, create_bill_handler, delete_bill,
-        get_bill_by_tenant, get_bills, get_bills_by_tenant, update_bill_json_handler,
-        update_bill_multipart_handler, upload_payment_handler,
+        get_bill_by_tenant, get_bill_years, get_bills, get_bills_by_tenant,
+        update_bill_json_handler, update_bill_multipart_handler, upload_payment_handler,
     },
 };
 
@@ -19,6 +19,7 @@ use crate::{
 pub fn bill_routes(state: &AppState) -> Router<AppState> {
     let bills = Router::new()
         .route("/", get(get_bills).post(create_bill_handler))
+        .route("/years", get(get_bill_years))
         .route("/{tenant_id}/bill", get(get_bill_by_tenant))
         .route("/{tenant_id}/bills", get(get_bills_by_tenant))
         .route("/{id}", put(update_bill_json_handler).delete(delete_bill))

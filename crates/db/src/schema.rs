@@ -20,6 +20,18 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         "0003_payment_method.sql",
         include_str!("../migrations/0003_payment_method.sql"),
     ),
+    (
+        "0004_bill_file_keys.sql",
+        include_str!("../migrations/0004_bill_file_keys.sql"),
+    ),
+    (
+        "0005_bill_indexes.sql",
+        include_str!("../migrations/0005_bill_indexes.sql"),
+    ),
+    (
+        "0006_tenant_name_nocase.sql",
+        include_str!("../migrations/0006_tenant_name_nocase.sql"),
+    ),
 ];
 
 /// How a column's value is stored in SQLite and rebuilt into a typed value.
@@ -90,6 +102,8 @@ mod tests {
         assert_eq!(kinds["total_amount"], ColumnKind::Int);
         assert_eq!(kinds["sort_order"], ColumnKind::Int);
         assert_eq!(kinds["image_key"], ColumnKind::Text);
+        assert_eq!(kinds["receipt_key"], ColumnKind::Text);
+        assert_eq!(kinds["payment_key"], ColumnKind::Text);
     }
 
     #[test]

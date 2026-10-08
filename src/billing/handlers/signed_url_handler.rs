@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::{
     app::AppState,
     billing::services::{
+        bill_service::{self, BillFile},
         payment_method_service,
         signed_url_service::{self, SignedUrl, check_segment},
     },
@@ -23,6 +24,13 @@ pub struct ReceiptPath {
 #[derive(Deserialize)]
 pub struct PaymentMethodPath {
     pub id: i32,
+}
+
+#[derive(Deserialize)]
+pub struct BillFilePath {
+    pub id: i32,
+    /// `receipt` or `payment`.
+    pub kind: BillFile,
 }
 
 /// Where the API is reached from: the request URI's scheme and authority when
@@ -90,6 +98,30 @@ pub async fn get_tenant_payment_signed_url_handler(
             &origin,
             &tenant_name,
             &filename,
+        )
+        .await?,
+    ))
+}
+
+/// GET /api/signed-urls/bills/{id}/{receipt|payment} (admin, or the bill's tenant): the bill's
+/// file wherever it is stored, so renaming the tenant or moving the bill doesn't lose it.
+pub async fn get_bill_file_signed_url_handler(
+    State(state): State<AppState>,
+    AuthUser(claims): AuthUser,
+    uri: Uri,
+    headers: HeaderMap,
+    path: ValidPath<BillFilePath>,
+) -> Result<Json<SignedUrl>, ApiError> {
+    let ValidPath(BillFilePath { id, kind }) = path;
+    let key = bill_service::file_key_for(&state.db, &claims, id, kind).await?;
+    let origin = request_origin(&uri, &headers)?;
+    Ok(Json(
+        signed_url_service::bill_file_link(
+            state.files.as_ref(),
+            &state.signer,
+            &origin,
+            &key,
+            &format!("{} not found", kind.label()),
         )
         .await?,
     ))

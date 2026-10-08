@@ -2,7 +2,7 @@
 //! `{"error": "<message>"}`, which the Flutter apps' `ApiException.message` shows.
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header::RETRY_AFTER},
     response::{IntoResponse, Response},
 };
 use sea_orm::DbErr;
@@ -24,11 +24,18 @@ pub enum ApiError {
     Conflict(String),
     /// 413
     PayloadTooLarge(String),
+    /// 429 with `Retry-After`: too many attempts; the message says so.
+    TooManyRequests(String),
     /// 502: file storage failed. The detail is logged, not sent.
     Upstream(String),
     /// 500. The detail is logged, not sent.
     Internal(String),
+    /// 503: the captcha check (Cloudflare Turnstile) could not be reached. The detail is logged, not sent.
+    VerificationUnavailable(String),
 }
+
+/// Seconds a client is told to wait after a 429 (the login limiter's window).
+pub const RETRY_AFTER_SECONDS: u32 = 60;
 
 impl ApiError {
     pub fn status(&self) -> StatusCode {
@@ -39,8 +46,10 @@ impl ApiError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::VerificationUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -52,9 +61,11 @@ impl ApiError {
             | Self::Forbidden(m)
             | Self::NotFound(m)
             | Self::Conflict(m)
-            | Self::PayloadTooLarge(m) => m,
+            | Self::PayloadTooLarge(m)
+            | Self::TooManyRequests(m) => m,
             Self::Upstream(_) => "File storage is unavailable, try again",
             Self::Internal(_) => "Internal server error",
+            Self::VerificationUnavailable(_) => "Verification is unavailable, try again",
         }
     }
 
@@ -66,8 +77,10 @@ impl ApiError {
             | Self::NotFound(m)
             | Self::Conflict(m)
             | Self::PayloadTooLarge(m)
+            | Self::TooManyRequests(m)
             | Self::Upstream(m)
-            | Self::Internal(m) => m,
+            | Self::Internal(m)
+            | Self::VerificationUnavailable(m) => m,
         }
     }
 }
@@ -88,7 +101,14 @@ impl IntoResponse for ApiError {
         } else {
             log_warn!("{status}: {}", self.detail());
         }
-        (status, Json(json!({ "error": self.public_message() }))).into_response()
+        let mut response =
+            (status, Json(json!({ "error": self.public_message() }))).into_response();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            response
+                .headers_mut()
+                .insert(RETRY_AFTER, HeaderValue::from(RETRY_AFTER_SECONDS));
+        }
+        response
     }
 }
 
@@ -149,6 +169,13 @@ mod tests {
             ApiError::from(DbErr::Custom("disk on fire".into())).status(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    #[test]
+    fn a_429_says_when_to_retry() {
+        let response = ApiError::TooManyRequests("Too many attempts".into()).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[RETRY_AFTER], "60");
     }
 
     #[tokio::test]

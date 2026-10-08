@@ -35,9 +35,10 @@ impl Login {
 
 /// Checks a login attempt before its credentials: at most the limiter's count
 /// of attempts per client (`ip`; 429 over it), then the Turnstile `token`.
-/// A failing limiter lets the attempt through (logged); an unreachable
-/// Turnstile does not (503). Until both apps send tokens, a missing token is
-/// allowed; a token that is sent is always checked.
+/// A failing limiter, or Turnstile being unreachable (an outage), lets the
+/// attempt through, logged: an outage must not lock everyone out, and the
+/// rate limit still applies. A token Cloudflare rejects is always refused.
+/// Until both apps send tokens, a missing token is allowed.
 pub async fn check_login_guards(
     state: &AppState,
     login: Login,
@@ -67,7 +68,14 @@ pub async fn check_login_guards(
         Ok(false) => Err(ApiError::BadRequest(
             "Verification failed. Please try again.".into(),
         )),
-        Err(err) => Err(ApiError::VerificationUnavailable(err.0)),
+        Err(err) => {
+            log_error!(
+                "{}: Turnstile could not be reached, letting the attempt through ({})",
+                login.as_str(),
+                err.0
+            );
+            Ok(())
+        }
     }
 }
 

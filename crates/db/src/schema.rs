@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use sea_orm::{ColumnTrait, ColumnType, EntityTrait, IdenStatic, Iterable};
 
-use crate::entities::{additional_charge, bill, electricity_reading, payment_method, room, tenant};
+use crate::entities::{
+    additional_charge, bill, electricity_reading, file_cleanup, payment_method, room, tenant,
+};
 
 /// The D1 migrations, in order. Must list every file in `migrations/` (a test checks it).
 pub const MIGRATIONS: &[(&str, &str)] = &[
@@ -31,6 +33,10 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0006_tenant_name_nocase.sql",
         include_str!("../migrations/0006_tenant_name_nocase.sql"),
+    ),
+    (
+        "0007_file_cleanup.sql",
+        include_str!("../migrations/0007_file_cleanup.sql"),
     ),
 ];
 
@@ -67,6 +73,7 @@ pub fn column_kinds() -> Result<HashMap<&'static str, ColumnKind>, String> {
     add::<bill::Entity>(&mut kinds)?;
     add::<additional_charge::Entity>(&mut kinds)?;
     add::<payment_method::Entity>(&mut kinds)?;
+    add::<file_cleanup::Entity>(&mut kinds)?;
     Ok(kinds)
 }
 
@@ -104,6 +111,9 @@ mod tests {
         assert_eq!(kinds["image_key"], ColumnKind::Text);
         assert_eq!(kinds["receipt_key"], ColumnKind::Text);
         assert_eq!(kinds["payment_key"], ColumnKind::Text);
+        assert_eq!(kinds["key"], ColumnKind::Text);
+        assert_eq!(kinds["attempts"], ColumnKind::Int);
+        assert_eq!(kinds["last_error"], ColumnKind::Text);
     }
 
     #[test]

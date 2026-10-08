@@ -30,8 +30,6 @@ pub enum ApiError {
     Upstream(String),
     /// 500. The detail is logged, not sent.
     Internal(String),
-    /// 503: the captcha check (Cloudflare Turnstile) could not be reached. The detail is logged, not sent.
-    VerificationUnavailable(String),
 }
 
 /// Seconds a client is told to wait after a 429 (the login limiter's window).
@@ -49,7 +47,6 @@ impl ApiError {
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::VerificationUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -65,7 +62,6 @@ impl ApiError {
             | Self::TooManyRequests(m) => m,
             Self::Upstream(_) => "File storage is unavailable, try again",
             Self::Internal(_) => "Internal server error",
-            Self::VerificationUnavailable(_) => "Verification is unavailable, try again",
         }
     }
 
@@ -79,8 +75,7 @@ impl ApiError {
             | Self::PayloadTooLarge(m)
             | Self::TooManyRequests(m)
             | Self::Upstream(m)
-            | Self::Internal(m)
-            | Self::VerificationUnavailable(m) => m,
+            | Self::Internal(m) => m,
         }
     }
 }

@@ -65,6 +65,51 @@ pub fn insert_for_reading_statement(
     )
 }
 
+/// `receipt_url IS ?` of the bill `bill_id`, as a condition the guarded statements share.
+const RECEIPT_STILL: &str =
+    "EXISTS (SELECT 1 FROM bill WHERE bill.id = ? AND bill.receipt_url IS ?)";
+
+/// [`insert_statement`], applied only while the bill's receipt is still `receipt_url` (in the same batch, before
+/// the bill update, so a receipt attached meanwhile leaves the charges untouched).
+pub fn insert_if_receipt_statement(
+    backend: DbBackend,
+    bill_id: i32,
+    amount: i32,
+    description: &str,
+    receipt_url: Option<&str>,
+) -> Statement {
+    Statement::from_sql_and_values(
+        backend,
+        format!(
+            "INSERT INTO additional_charge (bill_id, amount, description) SELECT ?, ?, ? WHERE {RECEIPT_STILL}"
+        ),
+        [
+            bill_id.into(),
+            amount.into(),
+            description.into(),
+            bill_id.into(),
+            receipt_url.map(str::to_string).into(),
+        ],
+    )
+}
+
+/// [`delete_by_bill_id_statement`], applied only while the bill's receipt is still `receipt_url`.
+pub fn delete_by_bill_id_if_receipt_statement(
+    backend: DbBackend,
+    bill_id: i32,
+    receipt_url: Option<&str>,
+) -> Statement {
+    Statement::from_sql_and_values(
+        backend,
+        format!("DELETE FROM additional_charge WHERE bill_id = ? AND {RECEIPT_STILL}"),
+        [
+            bill_id.into(),
+            bill_id.into(),
+            receipt_url.map(str::to_string).into(),
+        ],
+    )
+}
+
 /// DELETE of every charge of the bill `bill_id`.
 pub fn delete_by_bill_id_statement(backend: DbBackend, bill_id: i32) -> Statement {
     additional_charge::Entity::delete_many()

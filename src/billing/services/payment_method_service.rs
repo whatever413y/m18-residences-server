@@ -13,7 +13,7 @@ use sea_orm::{ActiveValue::NotSet, DbErr, Set};
 use serde::{Deserialize, Serialize};
 
 use crate::billing::repository::payment_method_repo;
-use crate::billing::services::archive::archive_file;
+use crate::billing::services::archive::archive_or_record;
 
 /// QR images are stored as PNG (QR codes stay sharp); the admin app converts them.
 pub const PAYMENT_IMAGE_TYPE: &str = "image/png";
@@ -190,7 +190,7 @@ pub async fn delete(db: &Db, files: &dyn FileStore, id: i32) -> Result<(), ApiEr
         deleted.id,
         deleted.name
     );
-    archive_image(files, deleted.id, deleted.image_key.as_deref()).await;
+    archive_image(db, files, deleted.id, deleted.image_key.as_deref()).await;
     Ok(())
 }
 
@@ -231,7 +231,7 @@ pub async fn replace_image(
         }
     };
     if old.image_key.as_deref() != Some(key.as_str()) {
-        archive_image(files, id, old.image_key.as_deref()).await;
+        archive_image(db, files, id, old.image_key.as_deref()).await;
     }
     Ok(updated)
 }
@@ -249,7 +249,7 @@ pub async fn remove_image(
             DbErr::RecordNotUpdated => not_found(id),
             err => err.into(),
         })?;
-    archive_image(files, id, old.image_key.as_deref()).await;
+    archive_image(db, files, id, old.image_key.as_deref()).await;
     Ok(updated)
 }
 
@@ -262,14 +262,8 @@ pub async fn image_key(db: &Db, id: i32) -> Result<String, ApiError> {
 }
 
 /// Archives a QR image the method no longer points at. Called after the database write, so a failure leaves the
-/// file at its key (logged), never a method pointing at a missing file.
-async fn archive_image(files: &dyn FileStore, id: i32, key: Option<&str>) {
+/// file at its key (recorded for the daily retry), never a method pointing at a missing file.
+async fn archive_image(db: &Db, files: &dyn FileStore, id: i32, key: Option<&str>) {
     let Some(key) = key else { return };
-    match archive_file(files, key).await {
-        Ok(()) => log_ok!("Archived payment image {key} of payment method {id}"),
-        Err(err) => log_error!(
-            "Payment image {key} of payment method {id} is orphaned: archiving it failed ({})",
-            err.0
-        ),
-    }
+    archive_or_record(db, files, key, &format!("QR image of payment method {id}")).await;
 }

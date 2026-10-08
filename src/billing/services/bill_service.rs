@@ -23,7 +23,7 @@ use crate::billing::repository::{
     bill_repo::{self, BillFilter},
     reading_read_repo, tenant_read_repo,
 };
-use crate::billing::services::archive::archive_file;
+use crate::billing::services::archive::archive_or_record;
 
 /// The API shape of a bill: `{bill, additional_charges, reading}`.
 #[derive(Debug, Serialize)]
@@ -273,12 +273,15 @@ fn receipt_change(old: &bill::Model, receipt_url: Option<&str>) -> Result<Receip
     }
 }
 
-/// The statements that replace bill `id`'s columns and charges.
+/// The statements that replace bill `id`'s columns and charges. With `seen_receipt` (a JSON update: the bill's
+/// `receipt_url` when it was read), every statement applies only while the receipt is still that one, so a receipt
+/// attached meanwhile is never overwritten (the charges go first: the bill update may change the receipt).
 fn update_statements(
     db: &Db,
     id: i32,
     input: &BillInput,
     receipt_key: ReceiptKey,
+    seen_receipt: Option<Option<&str>>,
 ) -> Result<Vec<Statement>, ApiError> {
     let backend = db.backend();
     let mut bill = build_bill_active_model(input)?;
@@ -287,15 +290,35 @@ fn update_statements(
         ReceiptKey::Clear => bill.receipt_key = Set(None),
         ReceiptKey::New(key) => bill.receipt_key = Set(Some(key)),
     }
-    let mut statements = vec![
-        bill_repo::update_statement(backend, id, bill),
-        additional_charge_repo::delete_by_bill_id_statement(backend, id),
-    ];
-    statements.extend(
-        input.additional_charges.iter().map(|c| {
-            additional_charge_repo::insert_statement(backend, id, c.amount, &c.description)
-        }),
-    );
+    let mut statements = Vec::new();
+    match seen_receipt {
+        Some(seen) => {
+            statements.push(
+                additional_charge_repo::delete_by_bill_id_if_receipt_statement(backend, id, seen),
+            );
+            statements.extend(input.additional_charges.iter().map(|c| {
+                additional_charge_repo::insert_if_receipt_statement(
+                    backend,
+                    id,
+                    c.amount,
+                    &c.description,
+                    seen,
+                )
+            }));
+            statements.push(bill_repo::update_if_receipt_statement(
+                backend, id, bill, seen,
+            ));
+        }
+        None => {
+            statements.push(additional_charge_repo::delete_by_bill_id_statement(
+                backend, id,
+            ));
+            statements.extend(input.additional_charges.iter().map(|c| {
+                additional_charge_repo::insert_statement(backend, id, c.amount, &c.description)
+            }));
+            statements.push(bill_repo::update_statement(backend, id, bill));
+        }
+    }
     Ok(statements)
 }
 
@@ -460,14 +483,7 @@ async fn remove_replaced_receipt(
             return;
         }
     }
-    match archive_file(files, &key).await {
-        Ok(()) => log_ok!("Archived receipt {key} of bill {}", old.id),
-        Err(err) => log_error!(
-            "Receipt {key} of bill {} is orphaned: archiving it failed ({})",
-            old.id,
-            err.0
-        ),
-    }
+    archive_or_record(db, files, &key, &format!("receipt of bill {}", old.id)).await;
 }
 
 /// Replaces a bill's columns and charges in one atomic batch; a receipt the
@@ -485,13 +501,31 @@ pub async fn update_bill(
     let receipt = receipt_change(&old, input.receipt_url.as_deref())?;
     let cleared = matches!(receipt, ReceiptKey::Clear);
     check_references(db, &input, Some(id)).await?;
-    db.atomic(update_statements(db, id, &input, receipt)?)
-        .await?;
+    db.atomic(update_statements(
+        db,
+        id,
+        &input,
+        receipt,
+        Some(old.receipt_url.as_deref()),
+    )?)
+    .await?;
+
+    let updated = read_back(db, id).await?;
+    // The receipt this update meant to leave; anything else means a receipt was attached (or cleared) meanwhile and
+    // nothing was written.
+    let expected = if cleared {
+        None
+    } else {
+        BillFile::Receipt.of(&old).0
+    };
+    if BillFile::Receipt.of(&updated.bill).0 != expected {
+        return Err(ApiError::Conflict(
+            "This bill changed meanwhile. Reload and try again.".into(),
+        ));
+    }
     if cleared {
         remove_replaced_receipt(db, files, &old, None).await;
     }
-
-    let updated = read_back(db, id).await?;
     log_ok!(
         "Updated bill id={} with {} charges",
         id,
@@ -534,7 +568,7 @@ pub async fn update_bill_with_receipt(
     log_ok!("Stored receipt {key} ({content_type})");
 
     input.receipt_url = Some(file_name);
-    let written = match update_statements(db, id, &input, ReceiptKey::New(key.clone())) {
+    let written = match update_statements(db, id, &input, ReceiptKey::New(key.clone()), None) {
         Ok(statements) => db.atomic(statements).await.map_err(ApiError::from),
         Err(err) => Err(err),
     };
@@ -583,14 +617,13 @@ async fn remove_replaced_payment(
     if new_key == Some(key.as_str()) {
         return;
     }
-    match archive_file(files, &key).await {
-        Ok(()) => log_ok!("Archived payment image {key} of bill {}", old.id),
-        Err(err) => log_error!(
-            "Payment image {key} of bill {} is orphaned: archiving it failed ({})",
-            old.id,
-            err.0
-        ),
-    }
+    archive_or_record(
+        db,
+        files,
+        &key,
+        &format!("payment image of bill {}", old.id),
+    )
+    .await;
 }
 
 /// Removes a just-stored file whose bill update did not happen.

@@ -20,7 +20,7 @@ m18-residences-server/
 │   ├── shared_rs/        # auth, errors, config, CORS, file storage + signed links, extractors, logging
 │   └── db/               # entities, D1 adapter, migrations/*.sql (the schema's only source)
 ├── tests/                # native integration tests (in-memory SQLite + in-memory file store)
-└── tools/                # one-off Node tools: pg-to-d1 (data move), receipts-backfill (WebP conversion)
+└── tools/                # Node tools: dev-seed (synthetic dev data), receipts-backfill (the one-off WebP conversion)
 ```
 
 Each domain folder has `routes/ → handlers/ → services/ → repository/` and could be moved into its own Worker:
@@ -128,7 +128,8 @@ missing record). JSON bodies are at most 64 KiB (413); uploads have their own li
 Logins: both take an optional `turnstile_token` (Cloudflare Turnstile; required once both apps send it). Before the
 credentials are checked: at most 10 attempts a minute per client IP and login (`429` with `Retry-After: 60`; if the
 limiter itself fails, the attempt goes through and is logged), then the token if sent (`400` "Verification
-failed. Please try again."; `503` if Cloudflare can't be reached: logins fail closed). Tenants log in with their
+failed. Please try again."; if Cloudflare can't be reached, the attempt goes through and is logged: an outage must
+not lock everyone out, and the rate limit still applies). Tenants log in with their
 name in any case, without surrounding spaces; names are unique in any case (migration 0006), trimmed, 1–64
 characters, without control characters, `/`, `\` or `..`.
 
@@ -141,9 +142,12 @@ checked by their bytes, and stores `receipts/<tenant name>/<unix ts>-r<reading i
 reading are checked. The admin app converts photos to WebP before uploading. Each bill records the full key of its
 receipt and payment image (`receipt_key`, `payment_key`; migration 0004, never sent to clients), so renaming a
 tenant or moving a bill keeps its files; the bill-id links use them. A JSON update's `receipt_url` may only keep or
-clear the receipt (400 otherwise). Once a bill no longer points at a receipt (replaced, cleared, or the bill
+clear the receipt (400 otherwise), and applies only if the receipt is still the one the update was based on (409
+"This bill changed meanwhile. Reload and try again." otherwise, nothing written). Once a bill no longer points at a receipt (replaced, cleared, or the bill
 deleted), that file is moved to `archive/<key>` in R2 (copied, then the original deleted; kept forever), after the
-database write; a failed archive is logged and leaves the file at its key.
+database write; a failed archive leaves the file at its key and records it in `file_cleanup` (migration 0007),
+which the Worker's daily scheduled run (`triggers.crons`, 02:00 Manila) retries, at most 50 files a run. Locally:
+`npx wrangler@4.145.0 dev --test-scheduled`, then `curl "http://localhost:50000/__scheduled?cron=0+18+*+*+*"`.
 
 Payment images (the tenant's proof of payment, optional): `PUT /api/bills/{id}/payment` (multipart part
 `payment_file`, at most 10 MiB, the same types as receipts) stores `tenant-payments/<tenant name>/<unix ts>-r<reading id>`

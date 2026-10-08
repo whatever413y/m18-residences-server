@@ -14,6 +14,9 @@ use m18_residences_server::app::AppState;
 use m18_residences_server::billing::repository::{
     additional_charge_repo, bill_repo, reading_read_repo, tenant_read_repo,
 };
+use m18_residences_server::billing::{
+    repository::file_cleanup_repo, services::file_cleanup_service,
+};
 use m18_residences_shared_rs::files::{
     FileError, FileInfo, FileSigner, FileStore, MemoryFileStore, StoredFile,
 };
@@ -1168,8 +1171,151 @@ async fn a_failed_receipt_archive_still_saves_the_bill() {
     assert_eq!(cleared["bill"]["paid"], false);
     assert_eq!(
         app.files.keys(),
-        vec![key],
-        "the old file is left at its key (logged)"
+        vec![key.clone()],
+        "the old file is left at its key"
+    );
+
+    // Recorded for the daily retry, which archives it once storage works again.
+    let recorded = file_cleanup_repo::oldest(app.db(), 10).await.unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].key, key);
+    assert_eq!(recorded[0].reason, format!("receipt of bill {bill_id}"));
+
+    app.files.set_failing(true);
+    let report = file_cleanup_service::retry_archives(&app.state.db, app.files.as_ref())
+        .await
+        .unwrap();
+    app.files.set_failing(false);
+    assert_eq!((report.archived, report.failed), (0, 1));
+    let recorded = file_cleanup_repo::oldest(app.db(), 10).await.unwrap();
+    assert_eq!(recorded[0].attempts, 1);
+    assert!(recorded[0].last_error.is_some());
+
+    let report = file_cleanup_service::retry_archives(&app.state.db, app.files.as_ref())
+        .await
+        .unwrap();
+    assert_eq!((report.archived, report.failed), (1, 0));
+    assert_archived(&app, &key, samples::JPEG, "image/jpeg");
+    assert!(
+        file_cleanup_repo::oldest(app.db(), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_file_recorded_twice_keeps_one_row_and_a_vanished_file_counts_as_done() {
+    let app = test_app().await;
+    file_cleanup_repo::record(app.db(), "receipts/X/1", "receipt of bill 1", "boom")
+        .await
+        .unwrap();
+    file_cleanup_repo::record(app.db(), "receipts/X/1", "receipt of bill 1", "boom again")
+        .await
+        .unwrap();
+    assert_eq!(
+        file_cleanup_repo::oldest(app.db(), 10).await.unwrap().len(),
+        1
+    );
+    // Nothing is stored at that key any more: nothing to archive, the row goes.
+    let report = file_cleanup_service::retry_archives(&app.state.db, app.files.as_ref())
+        .await
+        .unwrap();
+    assert_eq!((report.archived, report.failed), (1, 0));
+    assert!(
+        file_cleanup_repo::oldest(app.db(), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn guarded_bill_updates_change_nothing_once_the_receipt_changed() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].as_i64().unwrap() as i32;
+    // The admin read the bill without a receipt; one was attached since.
+    set_receipt(
+        &app,
+        bill_id.into(),
+        "1700000000-r1",
+        Some("receipts/x/1700000000-r1"),
+    )
+    .await;
+
+    let backend = app.state.db.backend();
+    let changed = bill::ActiveModel {
+        room_charges: sea_orm::Set(1),
+        receipt_url: sea_orm::Set(None),
+        paid: sea_orm::Set(false),
+        ..Default::default()
+    };
+    app.state
+        .db
+        .atomic(vec![
+            additional_charge_repo::delete_by_bill_id_if_receipt_statement(backend, bill_id, None),
+            additional_charge_repo::insert_if_receipt_statement(backend, bill_id, 5, "Extra", None),
+            bill_repo::update_if_receipt_statement(backend, bill_id, changed.clone(), None),
+        ])
+        .await
+        .unwrap();
+    let bill = bill_repo::get_by_id(app.db(), bill_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        bill.receipt_url.as_deref(),
+        Some("1700000000-r1"),
+        "the receipt stays"
+    );
+    assert_eq!(bill.room_charges, 5000, "nothing else changed either");
+    let charges = additional_charge_repo::get_all_by_bill_id(app.db(), bill_id)
+        .await
+        .unwrap();
+    assert_eq!(charges.len(), 1, "the charges are untouched");
+    assert_eq!(charges[0].description, "Water");
+
+    // With the receipt the admin did see, the same statements apply.
+    app.state
+        .db
+        .atomic(vec![
+            additional_charge_repo::delete_by_bill_id_if_receipt_statement(
+                backend,
+                bill_id,
+                Some("1700000000-r1"),
+            ),
+            additional_charge_repo::insert_if_receipt_statement(
+                backend,
+                bill_id,
+                5,
+                "Extra",
+                Some("1700000000-r1"),
+            ),
+            bill_repo::update_if_receipt_statement(
+                backend,
+                bill_id,
+                changed,
+                Some("1700000000-r1"),
+            ),
+        ])
+        .await
+        .unwrap();
+    let bill = bill_repo::get_by_id(app.db(), bill_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((bill.room_charges, bill.receipt_url), (1, None));
+    let charges = additional_charge_repo::get_all_by_bill_id(app.db(), bill_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        charges
+            .iter()
+            .map(|c| c.description.as_str())
+            .collect::<Vec<_>>(),
+        ["Extra"]
     );
 }
 

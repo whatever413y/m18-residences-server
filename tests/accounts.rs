@@ -691,7 +691,8 @@ async fn a_sent_captcha_token_is_checked() {
 }
 
 #[tokio::test]
-async fn logins_fail_closed_when_the_captcha_cannot_be_checked() {
+async fn logins_go_through_when_the_captcha_cannot_be_checked() {
+    // An outage must not lock everyone out; the rate limit still applies.
     let app = test_app().await;
     seed_juan(&app).await;
     app.captcha.set_unreachable(true);
@@ -702,11 +703,7 @@ async fn logins_fail_closed_when_the_captcha_cannot_be_checked() {
             json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
         )
         .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        body,
-        json!({ "error": "Verification is unavailable, try again" })
-    );
+    assert_eq!(status, StatusCode::OK, "{body}");
 }
 
 #[tokio::test]

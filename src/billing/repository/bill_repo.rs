@@ -153,6 +153,23 @@ pub fn update_statement(backend: DbBackend, id: i32, bill: bill::ActiveModel) ->
         .build(backend)
 }
 
+/// [`update_statement`], applied only while the bill's receipt is still `receipt_url` (`IS`: NULL matches NULL).
+pub fn update_if_receipt_statement(
+    backend: DbBackend,
+    id: i32,
+    bill: bill::ActiveModel,
+    receipt_url: Option<&str>,
+) -> Statement {
+    bill::Entity::update_many()
+        .set(bill)
+        .filter(bill::Column::Id.eq(id))
+        .filter(Expr::cust_with_values(
+            "\"bill\".\"receipt_url\" IS ?",
+            [receipt_url.map(str::to_string)],
+        ))
+        .build(backend)
+}
+
 /// Sets only the bill `id`'s payment image (its file name and key; `None` clears it), in one
 /// statement; with `only_without_receipt`, only while the bill has no receipt. The number of bills
 /// changed: 0 when there is no such bill (or it has a receipt by then).

@@ -79,6 +79,19 @@ query and parses timestamps by hand. Two alternatives were measured and not adop
 JavaScript). So the admin app loads fewer rows: `GET /api/bills?since=…` (the last 12 months plus every open bill),
 and a year, tenant or room only when the Billing page asks for it (indexes in migration 0005).
 
+Measured again on 2026-10-08 on the dev Worker with 1,200 bills (200 months of 6 tenants), median CPU:
+
+| Request | Rows | CPU |
+|---|---|---|
+| `GET /api/bills` (every bill) | 1,200 | 60 ms |
+| `GET /api/bills?since=<12 months back>` | 72 | 6 ms |
+| `GET /api/bills?year=2026` | 60 | 6 ms |
+| `GET /api/bills?tenant_id=1` / `?room_id=2` | 200 | 12 ms |
+| `GET /api/bills/years` | 2 | 3 ms |
+| `GET /api/electricity-readings` (every reading) | 1,200 | 13 ms |
+
+The readings list still loads everything; at today's size it costs a few ms.
+
 ## Tests
 
 ```sh

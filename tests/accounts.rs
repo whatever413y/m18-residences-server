@@ -8,10 +8,15 @@ use axum::{
     routing::get,
 };
 use chrono::Utc;
-use common::{ADMIN_PASSWORD, ADMIN_USERNAME, TestApp, seed_room, seed_tenant, test_app};
+use common::{
+    ADMIN_PASSWORD, ADMIN_USERNAME, LOGIN_LIMIT, TestApp, seed_room, seed_tenant, test_app,
+};
 use m18_residences_db::entities::tenant;
 use m18_residences_server::accounts::repository::tenant_read_repo;
-use m18_residences_shared_rs::auth::{Admin, AuthUser, Claims, JwtKeys};
+use m18_residences_shared_rs::{
+    auth::{Admin, AuthUser, Claims, JwtKeys},
+    captcha::FakeCaptcha,
+};
 use sea_orm::{ActiveModelTrait, ConnectionTrait, IntoActiveModel, Set};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -207,21 +212,47 @@ async fn tenant_login_issues_twenty_minute_tenant_claims() {
 }
 
 #[tokio::test]
-async fn tenant_login_matches_the_name_exactly() {
+async fn tenant_login_ignores_case_and_surrounding_spaces() {
     let app = test_app().await;
-    seed_juan(&app).await;
+    let juan = seed_juan(&app).await;
     for name in [
         "juan dela cruz",
         "JUAN DELA CRUZ",
         "Juan Dela Cruz ",
         " Juan Dela Cruz",
-        "Juan",
-        "",
     ] {
+        let (status, body) = tenant_login(&app, name).await;
+        assert_eq!(status, StatusCode::OK, "{name:?}: {body}");
+        // The token carries the stored name, which the name-keyed routes compare.
+        assert_eq!(
+            claims_of(&app, &token_of(&body)).name,
+            Some(juan.name.clone())
+        );
+    }
+    for name in ["Juan", "Juan  Dela Cruz", ""] {
         let (status, body) = tenant_login(&app, name).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{name:?}");
         assert_eq!(body, json!({ "error": "Tenant not found" }));
     }
+}
+
+#[tokio::test]
+async fn names_differing_only_by_case_log_in_only_exactly() {
+    let app = test_app().await;
+    let room = seed_room(app.db(), "Room 101", 5000).await;
+    // Only possible in data from before the case-insensitive index (migration 0006).
+    app.db()
+        .execute_unprepared("DROP INDEX tenants_name_key")
+        .await
+        .unwrap();
+    let upper = seed_tenant(app.db(), room.id, "ANA").await;
+    seed_tenant(app.db(), room.id, "Ana").await;
+
+    let (status, body) = tenant_login(&app, "ANA").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["tenant"]["id"], upper.id);
+    let (status, _) = tenant_login(&app, "ana").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -520,34 +551,170 @@ async fn issued_tokens_open_protected_routes() {
 // ---- repository ----
 
 #[tokio::test]
-async fn find_by_name_matches_exactly() {
+async fn find_by_name_ignoring_case_matches_whole_names() {
     let app = test_app().await;
     let room = seed_room(app.db(), "Test Room", 1000).await;
     let john = seed_tenant(app.db(), room.id, "John Doe").await;
     seed_tenant(app.db(), room.id, "Jane Doe").await;
 
-    let found = tenant_read_repo::find_by_name(app.db(), "John Doe")
-        .await
-        .unwrap();
-    assert_eq!(found, Some(john));
-    for name in ["john doe", "John Doe ", "John", ""] {
-        let found = tenant_read_repo::find_by_name(app.db(), name)
+    for name in ["John Doe", "john doe", "JOHN DOE"] {
+        let found = tenant_read_repo::find_by_name_ignoring_case(app.db(), name)
             .await
             .unwrap();
-        assert_eq!(found, None, "{name:?}");
+        assert_eq!(found, vec![john.clone()], "{name:?}");
+    }
+    for name in ["John Doe ", "John", "John%", ""] {
+        let found = tenant_read_repo::find_by_name_ignoring_case(app.db(), name)
+            .await
+            .unwrap();
+        assert!(found.is_empty(), "{name:?}");
     }
 }
 
 #[tokio::test]
-async fn find_by_name_reports_database_errors() {
+async fn find_by_name_ignoring_case_reports_database_errors() {
     let app = test_app().await;
     app.db()
         .execute_unprepared("ALTER TABLE tenant RENAME TO tenant_gone")
         .await
         .unwrap();
     assert!(
-        tenant_read_repo::find_by_name(app.db(), "John Doe")
+        tenant_read_repo::find_by_name_ignoring_case(app.db(), "John Doe")
             .await
             .is_err()
     );
+}
+
+// ---- login guards: rate limit and captcha ----
+
+/// A login `body` to `path` from the client `ip`; the status, the `Retry-After` header and the JSON body.
+async fn login_from(
+    app: &TestApp,
+    path: &str,
+    ip: &str,
+    body: Value,
+) -> (StatusCode, Option<String>, Value) {
+    let reply = app
+        .request_with_headers(
+            Method::POST,
+            path,
+            None,
+            Some(("application/json", body.to_string().into_bytes())),
+            &[("cf-connecting-ip", ip)],
+        )
+        .await;
+    let retry_after = reply
+        .headers
+        .get(header::RETRY_AFTER)
+        .map(|v| v.to_str().unwrap().to_string());
+    (reply.status, retry_after, reply.json())
+}
+
+#[tokio::test]
+async fn logins_are_limited_per_client_and_route() {
+    let app = test_app().await;
+    seed_juan(&app).await;
+    let wrong = json!({ "username": ADMIN_USERNAME, "password": "wrong" });
+    for _ in 0..LOGIN_LIMIT {
+        let (status, _, _) =
+            login_from(&app, "/api/auth/admin-login", "203.0.113.1", wrong.clone()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // Over the limit even with the right password.
+    let right = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD });
+    let (status, retry_after, body) =
+        login_from(&app, "/api/auth/admin-login", "203.0.113.1", right.clone()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(retry_after.as_deref(), Some("60"));
+    assert_eq!(
+        body,
+        json!({ "error": "Too many attempts. Please wait a minute and try again." })
+    );
+
+    // Another client, and the other login, have their own counts.
+    let (status, _, _) = login_from(&app, "/api/auth/admin-login", "203.0.113.2", right).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = login_from(
+        &app,
+        "/api/auth/login",
+        "203.0.113.1",
+        json!({ "name": TENANT_NAME }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_failing_rate_limiter_lets_logins_through() {
+    let app = test_app().await;
+    seed_juan(&app).await;
+    app.limiter.set_failing(true);
+    let (status, body) = tenant_login(&app, TENANT_NAME).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn a_sent_captcha_token_is_checked() {
+    let app = test_app().await;
+    seed_juan(&app).await;
+    let tenant = |token: &str| json!({ "name": TENANT_NAME, "turnstile_token": token });
+    let admin = |token: &str| json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "turnstile_token": token });
+
+    for (path, body) in [
+        ("/api/auth/login", tenant(FakeCaptcha::VALID_TOKEN)),
+        ("/api/auth/admin-login", admin(FakeCaptcha::VALID_TOKEN)),
+    ] {
+        let (status, body) = app.post(path, None, body).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+    }
+    for (path, body) in [
+        ("/api/auth/login", tenant("forged")),
+        ("/api/auth/admin-login", admin("forged")),
+        ("/api/auth/login", tenant("")),
+    ] {
+        let (status, body) = app.post(path, None, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(
+            body,
+            json!({ "error": "Verification failed. Please try again." })
+        );
+    }
+    // Checked before the credentials: a forged token with a wrong password is still a 400.
+    let (status, _) = app
+        .post(
+            "/api/auth/admin-login",
+            None,
+            json!({ "username": "x", "password": "y", "turnstile_token": "forged" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn logins_fail_closed_when_the_captcha_cannot_be_checked() {
+    let app = test_app().await;
+    seed_juan(&app).await;
+    app.captcha.set_unreachable(true);
+    let (status, body) = app
+        .post(
+            "/api/auth/login",
+            None,
+            json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        body,
+        json!({ "error": "Verification is unavailable, try again" })
+    );
+}
+
+#[tokio::test]
+async fn a_missing_captcha_token_is_still_allowed() {
+    // Transitional, until both apps send tokens: the cleanup makes it required.
+    let app = test_app().await;
+    seed_juan(&app).await;
+    app.captcha.set_unreachable(true);
+    let (status, body) = tenant_login(&app, TENANT_NAME).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }

@@ -867,6 +867,65 @@ async fn duplicate_names_are_409() {
             .0,
         StatusCode::OK
     );
+
+    // Tenant names are unique in any case: they log in that way.
+    for name in ["ana", "Ana", " ANA "] {
+        let body = json!({ "name": name, "room_id": a.id, "join_date": JOIN_DATE });
+        let (status, _) = app.post("/api/tenants", token, body).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{name:?}");
+    }
+}
+
+#[tokio::test]
+async fn tenant_names_are_trimmed_and_safe_for_file_keys() {
+    let app = test_app().await;
+    let token = app.admin_token();
+    let token = Some(token.as_str());
+    let room = seed_room(app.db(), "101", 1).await;
+    let body = |name: &str| json!({ "name": name, "room_id": room.id, "join_date": JOIN_DATE });
+
+    let (status, created) = app.post("/api/tenants", token, body("  ALPHA  ")).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["name"], "ALPHA");
+
+    let long = "X".repeat(65);
+    for (name, message) in [
+        ("   ", "name must not be empty"),
+        (long.as_str(), "name must be at most 64 characters"),
+        (
+            "A/B",
+            "name must not contain '/', '\\', '..' or control characters",
+        ),
+        (
+            "A\\B",
+            "name must not contain '/', '\\', '..' or control characters",
+        ),
+        (
+            "A..B",
+            "name must not contain '/', '\\', '..' or control characters",
+        ),
+        (
+            "A\tB",
+            "name must not contain '/', '\\', '..' or control characters",
+        ),
+    ] {
+        let (status, reply) = app.post("/api/tenants", token, body(name)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name:?}");
+        assert_eq!(reply, error(message), "{name:?}");
+        let (status, _) = app
+            .put(
+                &format!("/api/tenants/{}", created["id"]),
+                token,
+                body(name),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "update {name:?}");
+    }
+    // 64 characters, and a dot or accents, are fine.
+    for name in ["Y".repeat(64), "J. CRUZ".into(), "JOSÉ".into()] {
+        let (status, reply) = app.post("/api/tenants", token, body(&name)).await;
+        assert_eq!(status, StatusCode::CREATED, "{name:?}: {reply}");
+    }
 }
 
 #[tokio::test]
@@ -985,7 +1044,7 @@ async fn invalid_bodies_are_400_naming_the_field() {
         (
             "/api/electricity-readings",
             json!({ "tenant_id": 1, "room_id": 1, "prev_reading": -2_147_483_648_i64, "curr_reading": 2_147_483_647 }),
-            "curr_reading - prev_reading",
+            "must not be negative",
         ),
     ];
     for (uri, body, field) in cases {
@@ -1049,7 +1108,8 @@ async fn malformed_json_wrong_content_type_and_oversized_bodies_are_json_errors(
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "no body at all");
     assert!(reply.json()["error"].is_string());
 
-    let huge = format!(r#"{{"name":"{}","rent":1}}"#, "x".repeat(3 * 1024 * 1024));
+    // Over the 64 KiB limit for JSON bodies (uploads have their own).
+    let huge = format!(r#"{{"name":"{}","rent":1}}"#, "x".repeat(70 * 1024));
     let reply = app
         .request(
             Method::POST,
@@ -1098,21 +1158,46 @@ async fn unknown_fields_are_ignored_and_is_active_defaults_to_true_on_update() {
 }
 
 #[tokio::test]
-async fn negative_consumption_is_accepted() {
+async fn negative_or_decreasing_readings_are_rejected() {
     let app = test_app().await;
     let token = app.admin_token();
     let db = app.db();
     let room = seed_room(db, "Room", 1).await;
     let ana = seed_tenant(db, room.id, "ANA").await;
-    let (status, reading) = app
-        .post(
-            "/api/electricity-readings",
-            Some(&token),
-            json!({ "tenant_id": ana.id, "room_id": room.id, "prev_reading": 150, "curr_reading": 100 }),
-        )
+    let reading = |prev: i64, curr: i64| json!({ "tenant_id": ana.id, "room_id": room.id, "prev_reading": prev, "curr_reading": curr });
+    for (prev, curr, message) in [
+        (150, 100, "curr_reading must not be below prev_reading"),
+        (
+            -1,
+            100,
+            "prev_reading and curr_reading must not be negative",
+        ),
+        (0, -5, "prev_reading and curr_reading must not be negative"),
+    ] {
+        let (status, body) = app
+            .post(
+                "/api/electricity-readings",
+                Some(&token),
+                reading(prev, curr),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{prev} -> {curr}");
+        assert_eq!(body, json!({ "error": message }));
+    }
+    // Updates too; an unchanged meter (0 kWh) is fine.
+    let (status, created) = app
+        .post("/api/electricity-readings", Some(&token), reading(100, 100))
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(reading["consumption"], -50);
+    assert_eq!(created["consumption"], 0);
+    let (status, _) = app
+        .put(
+            &format!("/api/electricity-readings/{}", created["id"]),
+            Some(&token),
+            reading(100, 90),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1183,11 +1268,13 @@ fn classifies_constraint_failures() {
 }
 
 #[test]
-fn consumption_is_curr_minus_prev_and_refuses_overflow() {
+fn consumption_is_curr_minus_prev_and_never_negative() {
     assert_eq!(calculate_consumption(100, 150), Ok(50));
-    assert_eq!(calculate_consumption(150, 100), Ok(-50));
-    let err = calculate_consumption(i32::MIN, i32::MAX).unwrap_err();
-    assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(calculate_consumption(0, i32::MAX), Ok(i32::MAX));
+    for (prev, curr) in [(150, 100), (i32::MIN, i32::MAX), (-1, 0)] {
+        let err = calculate_consumption(prev, curr).unwrap_err();
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST, "{prev} -> {curr}");
+    }
 }
 
 #[tokio::test]

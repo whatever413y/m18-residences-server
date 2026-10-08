@@ -2,7 +2,7 @@
 //! Axum's plain-text ones, so every error the API returns has the same shape.
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, Path, Request, rejection::JsonRejection},
+    extract::{FromRequest, FromRequestParts, Path, Query, Request, rejection::JsonRejection},
     http::{StatusCode, request::Parts},
 };
 use serde::de::DeserializeOwned;
@@ -24,6 +24,25 @@ where
         Path::<T>::from_request_parts(parts, state)
             .await
             .map(|Path(value)| Self(value))
+            .map_err(|rejection| ApiError::BadRequest(rejection.body_text()))
+    }
+}
+
+/// `Query<T>` whose rejection is a JSON 400 naming the parameter
+/// (e.g. "Failed to deserialize query string: year: invalid digit found in string").
+pub struct ValidQuery<T>(pub T);
+
+impl<S, T> FromRequestParts<S> for ValidQuery<T>
+where
+    T: DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, ApiError> {
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(value)| Self(value))
             .map_err(|rejection| ApiError::BadRequest(rejection.body_text()))
     }
 }

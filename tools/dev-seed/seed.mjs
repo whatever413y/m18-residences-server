@@ -5,6 +5,8 @@
 //   node seed.mjs                            seed an empty dev database
 //   node seed.mjs --reset                    empty the dev tables first
 //   node seed.mjs --local --persist-to DIR   seed wrangler's local D1 and R2 state in DIR instead (no credentials)
+//   node seed.mjs --months N                 N months of readings and bills instead of 12 (e.g. 200 for ~1,200 bills to
+//                                            measure CPU); files are stored only for the newest 12 months
 // Credentials (remote only): CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from the secrets file ($M18_SECRETS_FILE,
 // default ../../../m18-residences-infra/.env). Wrangler: $WRANGLER_JS, else the e2e suite's pinned copy.
 import { execFileSync } from 'node:child_process';
@@ -96,7 +98,11 @@ const fakePayment = () =>
   png(360, 640, (x, y) => (y < 90 ? 70 : y > 160 && y < 520 && y % 48 < 14 && x > 40 && x < (y % 96 < 48 ? 320 : 220) ? 150 : 245));
 
 const TENANTS = ['ALPHA', 'BRAVO', 'CHARLIE', 'DELTA', 'ECHO', 'FOXTROT'];
-const MONTHS = 12;
+const monthsArg = process.argv.indexOf('--months');
+const MONTHS = monthsArg > 0 ? Number(process.argv[monthsArg + 1]) : 12;
+if (!Number.isInteger(MONTHS) || MONTHS < 1) throw new Error('--months needs a whole number of months (1 or more)');
+/** Files are stored for this many of the newest months only (each is one R2 write). */
+const MONTHS_WITH_FILES = 12;
 const RATE = 12; // pesos per kWh
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 const now = new Date();
@@ -160,18 +166,22 @@ TENANTS.forEach((name, i) => {
     const paid = !latest || i === 2 || i === 3;
     const sentPayment = latest && i < 4;
     const file = `${Date.parse(`${at.replace(' ', 'T')}Z`) / 1000 + 5 * 86400}-r${reading}`;
+    const receiptKey = `receipts/${name}/${file}`;
+    const paymentKey = `tenant-payments/${name}/${file}`;
     sql.push(
-      `INSERT INTO bill (id, reading_id, tenant_id, room_charges, electric_charges, total_amount, receipt_url, payment_url, paid, created_at, updated_at) ` +
+      `INSERT INTO bill (id, reading_id, tenant_id, room_charges, electric_charges, total_amount, receipt_url, payment_url, paid, ` +
+        `created_at, updated_at, receipt_key, payment_key) ` +
         `VALUES (${reading}, ${reading}, ${room}, ${rent}, ${consumption * RATE}, ${rent + consumption * RATE + water}, ` +
-        `${paid ? q(file) : 'NULL'}, ${sentPayment ? q(file) : 'NULL'}, ${paid ? 1 : 0}, ${q(at)}, ${q(at)});`,
+        `${paid ? q(file) : 'NULL'}, ${sentPayment ? q(file) : 'NULL'}, ${paid ? 1 : 0}, ${q(at)}, ${q(at)}, ` +
+        `${paid ? q(receiptKey) : 'NULL'}, ${sentPayment ? q(paymentKey) : 'NULL'});`,
     );
-    if (sentPayment) payments.push(`tenant-payments/${name}/${file}`);
+    if (sentPayment) payments.push(paymentKey);
     if (water) {
       sql.push(
         `INSERT INTO additional_charge (id, bill_id, amount, description, created_at, updated_at) VALUES (${++charge}, ${reading}, ${water}, 'Water', ${q(at)}, ${q(at)});`,
       );
     }
-    if (paid) receipts.push(`receipts/${name}/${file}`);
+    if (paid && m <= MONTHS_WITH_FILES) receipts.push(receiptKey);
   }
 });
 

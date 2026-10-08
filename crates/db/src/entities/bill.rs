@@ -19,6 +19,12 @@ pub struct Model {
     pub paid: bool,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
+    /// The receipt's full R2 key, set when it was stored (migration 0004). Server-side only.
+    #[serde(skip_serializing)]
+    pub receipt_key: Option<String>,
+    /// The payment image's full R2 key, set when it was stored (migration 0004). Server-side only.
+    #[serde(skip_serializing)]
+    pub payment_key: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

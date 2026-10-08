@@ -1,11 +1,12 @@
 //! Issues and validates JWTs. Admins log in with the configured credentials,
-//! tenants with their exact name; tokens are stateless.
+//! tenants with their name in any case; tokens are stateless. Both logins are
+//! rate limited per client and checked with the captcha first.
 use chrono::Utc;
 use m18_residences_db::entities::tenant::Model as Tenant;
 use m18_residences_shared_rs::{
     auth::{ADMIN_ROLE, Claims, JwtKeys},
     error::ApiError,
-    log_ok,
+    log_error, log_ok, log_warn,
 };
 
 use crate::accounts::repository::tenant_read_repo;
@@ -15,6 +16,60 @@ use crate::app::AppState;
 pub const ADMIN_TOKEN_TTL_SECONDS: i64 = 3600;
 /// Tenant tokens last 20 minutes.
 pub const TENANT_TOKEN_TTL_SECONDS: i64 = 1200;
+
+/// Which login an attempt is for: each is limited on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Login {
+    Admin,
+    Tenant,
+}
+
+impl Login {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin-login",
+            Self::Tenant => "login",
+        }
+    }
+}
+
+/// Checks a login attempt before its credentials: at most the limiter's count
+/// of attempts per client (`ip`; 429 over it), then the Turnstile `token`.
+/// A failing limiter lets the attempt through (logged); an unreachable
+/// Turnstile does not (503). Until both apps send tokens, a missing token is
+/// allowed; a token that is sent is always checked.
+pub async fn check_login_guards(
+    state: &AppState,
+    login: Login,
+    ip: Option<&str>,
+    token: Option<&str>,
+) -> Result<(), ApiError> {
+    let key = format!("{}:{}", login.as_str(), ip.unwrap_or("unknown"));
+    match state.login_guards.limiter.allow(&key).await {
+        Ok(true) => {}
+        Ok(false) => {
+            log_warn!("{}: too many attempts from one client", login.as_str());
+            return Err(ApiError::TooManyRequests(
+                "Too many attempts. Please wait a minute and try again.".into(),
+            ));
+        }
+        Err(err) => log_error!(
+            "{}: the rate limiter failed, letting the attempt through ({})",
+            login.as_str(),
+            err.0
+        ),
+    }
+    let Some(token) = token else {
+        return Ok(());
+    };
+    match state.login_guards.captcha.verify(token, ip).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ApiError::BadRequest(
+            "Verification failed. Please try again.".into(),
+        )),
+        Err(err) => Err(ApiError::VerificationUnavailable(err.0)),
+    }
+}
 
 fn expires_in(seconds: i64) -> usize {
     (Utc::now().timestamp() + seconds) as usize
@@ -38,11 +93,18 @@ pub fn admin_login(state: &AppState, username: &str, password: &str) -> Result<S
     Ok(token)
 }
 
-/// Tenant login by exact name (inactive tenants included, as before).
+/// Tenant login by name, ignoring surrounding spaces and case (inactive tenants
+/// included, as before). If two names differ only by case (data from before
+/// migration 0006), only the exact one logs in.
 pub async fn tenant_login(state: &AppState, name: &str) -> Result<(String, Tenant), ApiError> {
-    let tenant = tenant_read_repo::find_by_name(state.db.conn(), name)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Tenant not found".into()))?;
+    let name = name.trim();
+    let mut found = tenant_read_repo::find_by_name_ignoring_case(state.db.conn(), name).await?;
+    let tenant = if found.len() == 1 {
+        found.pop()
+    } else {
+        found.into_iter().find(|t| t.name == name)
+    }
+    .ok_or_else(|| ApiError::NotFound("Tenant not found".into()))?;
     let claims = Claims {
         id: Some(tenant.id),
         name: Some(tenant.name.clone()),

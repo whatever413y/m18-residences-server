@@ -11,6 +11,8 @@ pub struct Config {
     pub admin_password: String,
     /// Browser origins allowed to call the API (`ALLOWED_ORIGINS`, comma-separated).
     pub allowed_origins: Vec<AllowedOrigin>,
+    /// The Turnstile widget's secret, for checking the logins' captcha tokens.
+    pub turnstile_secret: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +40,7 @@ impl Config {
         let admin_username = required("ADMIN_USERNAME");
         let admin_password = required("ADMIN_PASSWORD");
         let origins = required("ALLOWED_ORIGINS");
+        let turnstile_secret = required("TURNSTILE_SECRET");
 
         let allowed_origins = if origins.is_empty() {
             Vec::new()
@@ -54,6 +57,7 @@ impl Config {
                 admin_username,
                 admin_password,
                 allowed_origins,
+                turnstile_secret,
             })
         } else {
             Err(ConfigError(problems))
@@ -85,6 +89,7 @@ mod tests {
                 "ALLOWED_ORIGINS",
                 "http://localhost:50001, http://localhost:50002",
             ),
+            ("TURNSTILE_SECRET", "turnstile"),
         ]))
         .unwrap();
         assert_eq!(config.jwt_secret, "s3cret");
@@ -106,6 +111,10 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("ALLOWED_ORIGINS"), "{text}");
+        assert!(
+            text.contains("TURNSTILE_SECRET is missing or empty"),
+            "{text}"
+        );
         assert!(!text.contains("ADMIN_USERNAME"), "{text}");
     }
 }

@@ -39,15 +39,6 @@ impl Claims {
             Err(forbidden_other_tenant())
         }
     }
-
-    /// Like [`Claims::ensure_admin_or_tenant`], for resources keyed by tenant name.
-    pub fn ensure_admin_or_name(&self, tenant_name: &str) -> Result<(), ApiError> {
-        if self.is_admin() || (self.is_tenant() && self.name.as_deref() == Some(tenant_name)) {
-            Ok(())
-        } else {
-            Err(forbidden_other_tenant())
-        }
-    }
 }
 
 fn forbidden_other_tenant() -> ApiError {
@@ -186,10 +177,7 @@ mod tests {
         let ana = tenant(7, "ANA");
         assert!(ana.ensure_admin_or_tenant(7).is_ok());
         assert!(ana.ensure_admin_or_tenant(8).is_err());
-        assert!(ana.ensure_admin_or_name("ANA").is_ok());
-        assert!(ana.ensure_admin_or_name("BEN").is_err());
         assert!(admin().ensure_admin_or_tenant(8).is_ok());
-        assert!(admin().ensure_admin_or_name("BEN").is_ok());
 
         // A token with some other role is neither admin nor tenant.
         let odd = Claims {

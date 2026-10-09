@@ -116,7 +116,6 @@ $env:FIXTURES_OUT='C:\dev\shared-packages\packages\m18_residences_shared\test\fi
 | `GET /api/files/{*key}` | anyone with a valid signed link (10 minutes) |
 | `GET /api/tenants/{id}`, `GET /api/bills/{tenant_id}/bill`, `GET /api/bills/{tenant_id}/bills` | admin, or that tenant |
 | `GET /api/signed-urls/bills/{id}/receipt`, `GET /api/signed-urls/bills/{id}/payment` | admin, or the bill's tenant |
-| `GET /api/signed-urls/receipts/{name}/{file}`, `GET /api/signed-urls/tenant-payments/{name}/{file}` (transitional, until both apps use the bill-id links) | admin, or the tenant with that name |
 | `PUT /api/bills/{id}/payment` | admin, or the bill's tenant until the bill has a receipt (then 409) |
 | `GET /api/payment-methods`, `GET /api/signed-urls/payment-methods/{id}` | any logged-in user |
 | everything else under `/api/rooms`, `/api/tenants`, `/api/electricity-readings`, `/api/bills`, `/api/payment-methods` | admin |
@@ -125,9 +124,9 @@ Errors are JSON `{"error": "..."}` (403 for a tenant token on an admin route, 40
 missing record). JSON bodies are at most 64 KiB (413); uploads have their own limits. Bills come back as
 `{bill, additional_charges, reading}`.
 
-Logins: both take an optional `turnstile_token` (Cloudflare Turnstile; required once both apps send it). Before the
+Logins: both need a `turnstile_token` (Cloudflare Turnstile; missing → the same 400 as a rejected one). Before the
 credentials are checked: at most 10 attempts a minute per client IP and login (`429` with `Retry-After: 60`; if the
-limiter itself fails, the attempt goes through and is logged), then the token if sent (`400` "Verification
+limiter itself fails, the attempt goes through and is logged), then the token (`400` "Verification
 failed. Please try again."; if Cloudflare can't be reached, the attempt goes through and is logged: an outage must
 not lock everyone out, and the rate limit still applies). Tenants log in with their
 name in any case, without surrounding spaces; names are unique in any case (migration 0006), trimmed, 1–64

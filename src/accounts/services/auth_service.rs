@@ -37,8 +37,8 @@ impl Login {
 /// of attempts per client (`ip`; 429 over it), then the Turnstile `token`.
 /// A failing limiter, or Turnstile being unreachable (an outage), lets the
 /// attempt through, logged: an outage must not lock everyone out, and the
-/// rate limit still applies. A token Cloudflare rejects is always refused.
-/// Until both apps send tokens, a missing token is allowed.
+/// rate limit still applies. A missing token, or one Cloudflare rejects, is
+/// refused.
 pub async fn check_login_guards(
     state: &AppState,
     login: Login,
@@ -60,14 +60,14 @@ pub async fn check_login_guards(
             err.0
         ),
     }
+    let verification_failed =
+        || ApiError::BadRequest("Verification failed. Please try again.".into());
     let Some(token) = token else {
-        return Ok(());
+        return Err(verification_failed());
     };
     match state.login_guards.captcha.verify(token, ip).await {
         Ok(true) => Ok(()),
-        Ok(false) => Err(ApiError::BadRequest(
-            "Verification failed. Please try again.".into(),
-        )),
+        Ok(false) => Err(verification_failed()),
         Err(err) => {
             log_error!(
                 "{}: Turnstile could not be reached, letting the attempt through ({})",

@@ -1338,8 +1338,8 @@ async fn receipt_links_resolve_to_the_stored_file() {
     assert_eq!(status, StatusCode::OK);
     let receipt = uploaded["bill"]["receipt_url"].as_str().unwrap();
 
-    // As the apps request it: the encoded tenant name plus the receipt_url.
-    let uri = format!("/api/signed-urls/receipts/Juan%20Dela%20Cruz/{receipt}");
+    // As the apps request it: by the bill's id; the link points at the stored key.
+    let uri = format!("/api/signed-urls/bills/{}/receipt", created["bill"]["id"]);
     let own = app.tenant_token(w.tenant.id, TENANT_NAME);
     let (status, body) = app.get(&uri, Some(&own)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1371,65 +1371,6 @@ async fn receipt_links_resolve_to_the_stored_file() {
     assert_eq!(reply.headers[header::CONTENT_TYPE], "image/png");
     assert_eq!(reply.headers[header::CACHE_CONTROL], "private, max-age=600");
     assert_eq!(reply.headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
-}
-
-#[tokio::test]
-async fn receipt_links_follow_the_permission_table() {
-    let app = test_app().await;
-    app.files
-        .insert("receipts/juan/1700000000-r1", samples::JPEG, "image/jpeg");
-    let uri = "/api/signed-urls/receipts/juan/1700000000-r1";
-
-    let (status, body) = app.get(uri, Some(&app.admin_token())).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(
-        body["url"]
-            .as_str()
-            .unwrap()
-            .contains("receipts/juan/1700000000-r1"),
-        "{body}"
-    );
-    assert_eq!(body["content_type"], "image/jpeg");
-
-    let (status, _) = app.get(uri, Some(&app.tenant_token(1, "juan"))).await;
-    assert_eq!(status, StatusCode::OK, "own name");
-    let (status, body) = app.get(uri, Some(&app.tenant_token(2, "pedro"))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body, error("You can only access your own records"));
-    let (status, body) = app.get(uri, None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(body, error("Authentication required"));
-
-    let (status, body) = app
-        .get(
-            "/api/signed-urls/receipts/juan/1700000001-r1",
-            Some(&app.admin_token()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, error("Receipt not found"));
-
-    for (bad, field) in [
-        (
-            "/api/signed-urls/receipts/..%2Fpayments/gcash.png",
-            "tenant_name",
-        ),
-        ("/api/signed-urls/receipts/juan/a%2Fb", "filename"),
-        ("/api/signed-urls/receipts/juan/..", "filename"),
-        ("/api/signed-urls/receipts/ju%5Can/x", "tenant_name"),
-    ] {
-        let (status, body) = app.get(bad, Some(&app.admin_token())).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
-        assert_eq!(
-            body,
-            error(&format!("{field} must not contain '/', '\\' or '..'")),
-            "{bad}"
-        );
-    }
-
-    app.files.set_failing(true);
-    let (status, _) = app.get(uri, Some(&app.admin_token())).await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
 }
 
 // ---------- payment methods ----------
@@ -2189,7 +2130,7 @@ async fn replacing_and_clearing_a_payment_archives_the_old_file() {
     app.files.insert(&old_key, samples::JPEG, "image/jpeg");
     app.db()
         .execute_unprepared(&format!(
-            "UPDATE bill SET payment_url = '1700000000-r{}' WHERE id = {bill_id}",
+            "UPDATE bill SET payment_url = '1700000000-r{}', payment_key = '{old_key}' WHERE id = {bill_id}",
             w.reading.id
         ))
         .await
@@ -2250,58 +2191,6 @@ async fn deleting_a_bill_archives_its_payment_image() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_archived(&app, &key, samples::PNG, "image/png");
     assert_eq!(app.files.keys(), vec![format!("archive/{key}")]);
-}
-
-#[tokio::test]
-async fn payment_links_follow_the_permission_table() {
-    let app = test_app().await;
-    let w = world(&app).await;
-    let created = create_bill(&app, &w).await;
-    let (_, updated) = upload_payment(
-        &app,
-        &created["bill"]["id"],
-        Some(&app.admin_token()),
-        samples::PNG,
-    )
-    .await;
-    let payment = updated["bill"]["payment_url"].as_str().unwrap();
-    // As the apps request it: the encoded tenant name plus the payment_url.
-    let uri = format!("/api/signed-urls/tenant-payments/Juan%20Dela%20Cruz/{payment}");
-
-    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
-    let (status, body) = app.get(&uri, Some(&own)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["content_type"], "image/png");
-    let url = body["url"].as_str().unwrap();
-    let reply = app
-        .request(Method::GET, path_and_query(url), None, None)
-        .await;
-    assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.body, samples::PNG);
-
-    let (status, _) = app.get(&uri, Some(&app.admin_token())).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, body) = app.get(&uri, Some(&app.tenant_token(2, "Pedro"))).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body, error("You can only access your own records"));
-    let (status, _) = app.get(&uri, None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    let (status, body) = app
-        .get(
-            "/api/signed-urls/tenant-payments/Juan%20Dela%20Cruz/1-r1",
-            Some(&app.admin_token()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, error("Payment image not found"));
-    let (status, _) = app
-        .get(
-            "/api/signed-urls/tenant-payments/..%2Freceipts/x",
-            Some(&app.admin_token()),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 // ---------- files by bill id (stored keys) ----------
@@ -2442,28 +2331,31 @@ async fn bill_file_links_follow_the_permission_table() {
 }
 
 #[tokio::test]
-async fn bills_without_a_recorded_key_fall_back_to_the_tenant_name() {
+async fn a_bill_without_a_recorded_key_has_no_file_link_and_the_name_routes_are_gone() {
     let app = test_app().await;
     let w = world(&app).await;
     let created = create_bill(&app, &w).await;
     let bill_id = created["bill"]["id"].clone();
-    let key = format!("receipts/{TENANT_NAME}/1700000000-r1");
-    app.files.insert(&key, samples::PNG, "image/png");
+    app.files.insert(
+        &format!("receipts/{TENANT_NAME}/1700000000-r1"),
+        samples::PNG,
+        "image/png",
+    );
     set_receipt(&app, bill_id.as_i64().unwrap(), "1700000000-r1", None).await;
 
-    let (status, _, bytes) = bill_file(&app, &bill_id, "receipt", &app.admin_token()).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(bytes, samples::PNG);
-    // Archived by that key too once cleared.
-    let (status, _) = app
-        .put(
-            &format!("/api/bills/{bill_id}"),
-            Some(&app.admin_token()),
-            bill_body(&w, w.reading.id),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_archived(&app, &key, samples::PNG, "image/png");
+    let (status, body, _) = bill_file(&app, &bill_id, "receipt", &app.admin_token()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, error("Receipt not found"));
+
+    for uri in [
+        "/api/signed-urls/receipts/Juan%20Dela%20Cruz/1700000000-r1",
+        "/api/signed-urls/tenant-payments/Juan%20Dela%20Cruz/1700000000-r1",
+    ] {
+        let reply = app
+            .request(Method::GET, uri, Some(&app.admin_token()), None)
+            .await;
+        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{uri}");
+    }
 }
 
 #[tokio::test]

@@ -346,28 +346,11 @@ pub async fn get_bill_years(db: &Db) -> Result<Vec<i32>, ApiError> {
     Ok(bill_repo::get_years(db.conn()).await?)
 }
 
-/// The key `bill`'s `kind` file is stored at, or `None` if it has none. Bills
-/// whose file came before their key was recorded (migration 0004 backfilled
-/// the rest) get it rebuilt from their tenant's current name.
-pub async fn file_key(
-    db: &Db,
-    bill: &bill::Model,
-    kind: BillFile,
-) -> Result<Option<String>, ApiError> {
+/// The key `bill`'s `kind` file is stored at (recorded when it was stored), or `None` if it has none.
+pub fn file_key(bill: &bill::Model, kind: BillFile) -> Option<String> {
     match kind.of(bill) {
-        (None, _) => Ok(None),
-        (Some(_), Some(key)) => Ok(Some(key.to_string())),
-        (Some(name), None) => {
-            let tenant = tenant_read_repo::get_by_id(db.conn(), bill.tenant_id)
-                .await?
-                .ok_or_else(|| {
-                    ApiError::Internal(format!(
-                        "bill {}'s tenant {} is gone",
-                        bill.id, bill.tenant_id
-                    ))
-                })?;
-            Ok(Some(kind.new_key(&tenant.name, name)))
-        }
+        (Some(_), Some(key)) => Some(key.to_string()),
+        _ => None,
     }
 }
 
@@ -383,9 +366,7 @@ pub async fn file_key_for(
         .await?
         .ok_or_else(|| not_found(id))?;
     claims.ensure_admin_or_tenant(bill.tenant_id)?;
-    file_key(db, &bill, kind)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("{} not found", kind.label())))
+    file_key(&bill, kind).ok_or_else(|| ApiError::NotFound(format!("{} not found", kind.label())))
 }
 
 /// A tenant's newest bill with charges and reading.
@@ -459,13 +440,8 @@ async fn remove_replaced_receipt(
     old: &bill::Model,
     new_key: Option<&str>,
 ) {
-    let key = match file_key(db, old, BillFile::Receipt).await {
-        Ok(Some(key)) => key,
-        Ok(None) => return,
-        Err(err) => {
-            log_error!("The old receipt of bill {} is orphaned: {err}", old.id);
-            return;
-        }
+    let Some(key) = file_key(old, BillFile::Receipt) else {
+        return;
     };
     if new_key == Some(key.as_str()) {
         return;
@@ -602,16 +578,8 @@ async fn remove_replaced_payment(
     old: &bill::Model,
     new_key: Option<&str>,
 ) {
-    let key = match file_key(db, old, BillFile::Payment).await {
-        Ok(Some(key)) => key,
-        Ok(None) => return,
-        Err(err) => {
-            log_error!(
-                "The old payment image of bill {} is orphaned: {err}",
-                old.id
-            );
-            return;
-        }
+    let Some(key) = file_key(old, BillFile::Payment) else {
+        return;
     };
     // The same key only when re-uploaded within the second: `put` already replaced it.
     if new_key == Some(key.as_str()) {

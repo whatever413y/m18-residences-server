@@ -55,14 +55,18 @@ async fn admin_login(app: &TestApp, username: &str, password: &str) -> (StatusCo
     app.post(
         "/api/auth/admin-login",
         None,
-        json!({ "username": username, "password": password }),
+        json!({ "username": username, "password": password, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
     )
     .await
 }
 
 async fn tenant_login(app: &TestApp, name: &str) -> (StatusCode, Value) {
-    app.post("/api/auth/login", None, json!({ "name": name }))
-        .await
+    app.post(
+        "/api/auth/login",
+        None,
+        json!({ "name": name, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
+    )
+    .await
 }
 
 /// `POST /api/auth/validate-token` with a raw `Authorization` header value.
@@ -110,7 +114,7 @@ async fn admin_login_returns_token_and_rejects_wrong_password() {
 #[tokio::test]
 async fn admin_login_issues_one_hour_admin_claims_in_wire_order() {
     let app = test_app().await;
-    let body = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD }).to_string();
+    let body = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "turnstile_token": FakeCaptcha::VALID_TOKEN }).to_string();
     let reply = app
         .request(
             Method::POST,
@@ -182,7 +186,6 @@ async fn tenant_login_returns_tenant_and_token() {
     // property and billing handlers check them.
     let claims = claims_of(&app, &token);
     assert!(claims.ensure_admin_or_tenant(juan.id).is_ok());
-    assert!(claims.ensure_admin_or_name(TENANT_NAME).is_ok());
     assert!(claims.ensure_admin_or_tenant(juan.id + 1).is_err());
 }
 
@@ -190,7 +193,8 @@ async fn tenant_login_returns_tenant_and_token() {
 async fn tenant_login_issues_twenty_minute_tenant_claims() {
     let app = test_app().await;
     let juan = seed_juan(&app).await;
-    let body = json!({ "name": TENANT_NAME }).to_string();
+    let body =
+        json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }).to_string();
     let reply = app
         .request(
             Method::POST,
@@ -357,11 +361,15 @@ async fn auth_routes_are_public_whatever_the_token() {
         Some(other_tenant.as_str()),
         Some("not-a-jwt"),
     ] {
-        let credentials = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD });
+        let credentials = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "turnstile_token": FakeCaptcha::VALID_TOKEN });
         let (status, _) = app.post("/api/auth/admin-login", token, credentials).await;
         assert_eq!(status, StatusCode::OK, "admin-login with {token:?}");
         let (status, _) = app
-            .post("/api/auth/login", token, json!({ "name": TENANT_NAME }))
+            .post(
+                "/api/auth/login",
+                token,
+                json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "login with {token:?}");
     }
@@ -614,14 +622,14 @@ async fn login_from(
 async fn logins_are_limited_per_client_and_route() {
     let app = test_app().await;
     seed_juan(&app).await;
-    let wrong = json!({ "username": ADMIN_USERNAME, "password": "wrong" });
+    let wrong = json!({ "username": ADMIN_USERNAME, "password": "wrong", "turnstile_token": FakeCaptcha::VALID_TOKEN });
     for _ in 0..LOGIN_LIMIT {
         let (status, _, _) =
             login_from(&app, "/api/auth/admin-login", "203.0.113.1", wrong.clone()).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
     // Over the limit even with the right password.
-    let right = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD });
+    let right = json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "turnstile_token": FakeCaptcha::VALID_TOKEN });
     let (status, retry_after, body) =
         login_from(&app, "/api/auth/admin-login", "203.0.113.1", right.clone()).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
@@ -638,7 +646,7 @@ async fn logins_are_limited_per_client_and_route() {
         &app,
         "/api/auth/login",
         "203.0.113.1",
-        json!({ "name": TENANT_NAME }),
+        json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -707,11 +715,21 @@ async fn logins_go_through_when_the_captcha_cannot_be_checked() {
 }
 
 #[tokio::test]
-async fn a_missing_captcha_token_is_still_allowed() {
-    // Transitional, until both apps send tokens: the cleanup makes it required.
+async fn a_missing_captcha_token_is_refused() {
     let app = test_app().await;
     seed_juan(&app).await;
-    app.captcha.set_unreachable(true);
-    let (status, body) = tenant_login(&app, TENANT_NAME).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    for (path, body) in [
+        ("/api/auth/login", json!({ "name": TENANT_NAME })),
+        (
+            "/api/auth/admin-login",
+            json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD }),
+        ),
+    ] {
+        let (status, body) = app.post(path, None, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(
+            body,
+            json!({ "error": "Verification failed. Please try again." })
+        );
+    }
 }

@@ -11,15 +11,9 @@ use crate::{
     billing::services::{
         bill_service::{self, BillFile},
         payment_method_service,
-        signed_url_service::{self, SignedUrl, check_segment},
+        signed_url_service::{self, SignedUrl},
     },
 };
-
-#[derive(Deserialize)]
-pub struct ReceiptPath {
-    pub tenant_name: String,
-    pub filename: String,
-}
 
 #[derive(Deserialize)]
 pub struct PaymentMethodPath {
@@ -45,62 +39,6 @@ fn request_origin(uri: &Uri, headers: &HeaderMap) -> Result<String, ApiError> {
         .filter(|h| !h.is_empty())
         .ok_or_else(|| ApiError::BadRequest("Missing Host header".into()))?;
     Ok(format!("http://{host}"))
-}
-
-/// GET /api/signed-urls/receipts/{tenant_name}/{filename} (admin, or that tenant)
-pub async fn get_receipt_signed_url_handler(
-    State(state): State<AppState>,
-    AuthUser(claims): AuthUser,
-    uri: Uri,
-    headers: HeaderMap,
-    path: ValidPath<ReceiptPath>,
-) -> Result<Json<SignedUrl>, ApiError> {
-    let ValidPath(ReceiptPath {
-        tenant_name,
-        filename,
-    }) = path;
-    check_segment("tenant_name", &tenant_name)?;
-    check_segment("filename", &filename)?;
-    claims.ensure_admin_or_name(&tenant_name)?;
-    let origin = request_origin(&uri, &headers)?;
-    Ok(Json(
-        signed_url_service::receipt_link(
-            state.files.as_ref(),
-            &state.signer,
-            &origin,
-            &tenant_name,
-            &filename,
-        )
-        .await?,
-    ))
-}
-
-/// GET /api/signed-urls/tenant-payments/{tenant_name}/{filename} (admin, or that tenant)
-pub async fn get_tenant_payment_signed_url_handler(
-    State(state): State<AppState>,
-    AuthUser(claims): AuthUser,
-    uri: Uri,
-    headers: HeaderMap,
-    path: ValidPath<ReceiptPath>,
-) -> Result<Json<SignedUrl>, ApiError> {
-    let ValidPath(ReceiptPath {
-        tenant_name,
-        filename,
-    }) = path;
-    check_segment("tenant_name", &tenant_name)?;
-    check_segment("filename", &filename)?;
-    claims.ensure_admin_or_name(&tenant_name)?;
-    let origin = request_origin(&uri, &headers)?;
-    Ok(Json(
-        signed_url_service::tenant_payment_link(
-            state.files.as_ref(),
-            &state.signer,
-            &origin,
-            &tenant_name,
-            &filename,
-        )
-        .await?,
-    ))
 }
 
 /// GET /api/signed-urls/bills/{id}/{receipt|payment} (admin, or the bill's tenant): the bill's

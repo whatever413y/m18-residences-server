@@ -16,14 +16,14 @@ use crate::app::AppState;
 pub struct AdminLoginInput {
     pub username: String,
     pub password: String,
-    /// The Turnstile widget's token (optional until both apps send it).
+    /// The Turnstile widget's token (a missing one is refused with the same 400 as a rejected one).
     pub turnstile_token: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct TenantLoginInput {
     pub name: String,
-    /// The Turnstile widget's token (optional until both apps send it).
+    /// The Turnstile widget's token (a missing one is refused with the same 400 as a rejected one).
     pub turnstile_token: Option<String>,
 }
 

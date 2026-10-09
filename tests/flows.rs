@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use axum::http::{Method, StatusCode, header};
 use common::{ADMIN_PASSWORD, ADMIN_USERNAME, Multipart, TestApp, samples, test_app};
+use m18_residences_shared_rs::captcha::FakeCaptcha;
 use serde_json::{Value, json};
 
 // Synthetic data (also used for the exported fixtures).
@@ -96,7 +97,7 @@ async fn admin_flow(app: &TestApp) -> Flow {
         .post(
             "/api/auth/admin-login",
             None,
-            json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD }),
+            json!({ "username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "admin login: {admin}");
@@ -185,7 +186,11 @@ async fn admin_bills_a_tenant_who_then_sees_the_bill_and_its_receipt() {
 
     // The tenant logs in by name and reads only its own records.
     let (status, login) = app
-        .post("/api/auth/login", None, json!({ "name": TENANT_NAME }))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "tenant login: {login}");
     assert_eq!(login["tenant"], flow.tenant);
@@ -236,15 +241,11 @@ async fn admin_bills_a_tenant_who_then_sees_the_bill_and_its_receipt() {
         .await;
     assert_eq!(status, StatusCode::OK, "upload: {paid}");
     assert_eq!(paid["bill"]["paid"], true);
-    let receipt = paid["bill"]["receipt_url"].as_str().unwrap().to_string();
 
     // The tenant opens its receipt through a signed link; other tenants can't get one.
     let (status, link) = app
         .get(
-            &format!(
-                "/api/signed-urls/receipts/{}/{receipt}",
-                TENANT_NAME.replace(' ', "%20")
-            ),
+            &format!("/api/signed-urls/bills/{bill_id}/receipt"),
             Some(&tenant),
         )
         .await;
@@ -264,10 +265,7 @@ async fn admin_bills_a_tenant_who_then_sees_the_bill_and_its_receipt() {
     let stranger = app.tenant_token(tenant_id as i32 + 1, "SOMEONE ELSE");
     let (status, _) = app
         .get(
-            &format!(
-                "/api/signed-urls/receipts/{}/{receipt}",
-                TENANT_NAME.replace(' ', "%20")
-            ),
+            &format!("/api/signed-urls/bills/{bill_id}/receipt"),
             Some(&stranger),
         )
         .await;
@@ -341,7 +339,11 @@ async fn export_contract_fixtures() {
     let app = test_app().await;
     let flow = admin_flow(&app).await;
     let (status, tenant_login) = app
-        .post("/api/auth/login", None, json!({ "name": TENANT_NAME }))
+        .post(
+            "/api/auth/login",
+            None,
+            json!({ "name": TENANT_NAME, "turnstile_token": FakeCaptcha::VALID_TOKEN }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     let admin = token_of(&flow.admin);

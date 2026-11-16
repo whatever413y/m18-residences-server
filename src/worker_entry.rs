@@ -5,7 +5,12 @@ use std::sync::Arc;
 
 use axum::{body::Body, http::Response};
 use m18_residences_shared_rs::{
-    captcha::Turnstile, config::Config, log_error, r2::R2FileStore, rate_limit::CfRateLimiter,
+    captcha::Turnstile,
+    config::Config,
+    log_error,
+    notify::{Disabled, DiscordWebhook, Notifier},
+    r2::R2FileStore,
+    rate_limit::CfRateLimiter,
 };
 use tower_service::Service;
 use worker::{
@@ -32,14 +37,25 @@ async fn fetch(req: HttpRequest, env: Env, _ctx: Context) -> worker::Result<Resp
         limiter: Arc::new(CfRateLimiter::new(env.rate_limiter("LOGIN_RATE_LIMITER")?)),
         captcha: Arc::new(Turnstile::new(config.turnstile_secret.clone())),
     };
+    let notifier: Arc<dyn Notifier> = match &config.discord_webhook_url {
+        Some(url) => Arc::new(DiscordWebhook::new(url.clone())),
+        None => Arc::new(Disabled),
+    };
     let version = env
         .get_binding::<WorkerVersionMetadata>("CF_VERSION_METADATA")
         .ok()
         .map(|m| m.tag())
         .filter(|tag| !tag.is_empty());
-    Ok(app(AppState::new(db, files, login_guards, config, version))
-        .call(req)
-        .await?)
+    Ok(app(AppState::new(
+        db,
+        files,
+        login_guards,
+        notifier,
+        config,
+        version,
+    ))
+    .call(req)
+    .await?)
 }
 
 /// A secret, or else a plain var.

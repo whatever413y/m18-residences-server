@@ -19,6 +19,7 @@ use m18_residences_shared_rs::{
     captcha::FakeCaptcha,
     config::Config,
     files::MemoryFileStore,
+    notify::FakeNotifier,
     rate_limit::MemoryRateLimiter,
 };
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
@@ -44,6 +45,7 @@ pub fn test_config() -> Config {
                     "http://localhost:50001,http://localhost:50002,https://*-admin.preview.test"
                 }
                 "TURNSTILE_SECRET" => "test-turnstile-secret",
+                "DISCORD_WEBHOOK_URL" => "off",
                 _ => return None,
             }
             .to_string(),
@@ -58,6 +60,7 @@ pub struct TestApp {
     pub files: Arc<MemoryFileStore>,
     pub limiter: Arc<MemoryRateLimiter>,
     pub captcha: Arc<FakeCaptcha>,
+    pub notifier: Arc<FakeNotifier>,
 }
 
 /// A response: status, headers and raw body.
@@ -94,10 +97,12 @@ pub async fn test_app() -> TestApp {
         limiter: limiter.clone(),
         captcha: captcha.clone(),
     };
+    let notifier = Arc::new(FakeNotifier::default());
     let state = AppState::new(
         db,
         files.clone(),
         login_guards,
+        notifier.clone(),
         test_config(),
         Some("test-version".into()),
     );
@@ -107,6 +112,7 @@ pub async fn test_app() -> TestApp {
         files,
         limiter,
         captcha,
+        notifier,
     }
 }
 

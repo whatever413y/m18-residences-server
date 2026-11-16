@@ -2058,6 +2058,66 @@ async fn payment_uploads_follow_the_permission_table() {
 }
 
 #[tokio::test]
+async fn a_tenants_payment_upload_notifies_the_admin() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+
+    let (status, body) = upload_payment(&app, &bill_id, Some(&own), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let posted: chrono::NaiveDateTime = created["bill"]["created_at"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let total = created["bill"]["total_amount"].as_i64().unwrap();
+    assert!(
+        total >= 1000,
+        "the fixture's total shows a thousands separator"
+    );
+    let pesos = format!("₱{},{:03}", total / 1000, total % 1000);
+    assert_eq!(
+        app.notifier.sent(),
+        vec![format!(
+            "💸 {TENANT_NAME} uploaded a payment for the {} bill ({pesos}). Check it under Verify in the admin app.",
+            posted.format("%B %Y")
+        )]
+    );
+}
+
+#[tokio::test]
+async fn an_admins_payment_upload_notifies_no_one() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+
+    let (status, body) =
+        upload_payment(&app, &bill_id, Some(&app.admin_token()), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(app.notifier.sent().is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_notice_does_not_fail_the_upload() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let own = app.tenant_token(w.tenant.id, TENANT_NAME);
+    app.notifier.set_failing(true);
+
+    let (status, body) = upload_payment(&app, &bill_id, Some(&own), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        app.files.file(&payment_key(&body)).is_some(),
+        "attached anyway"
+    );
+}
+
+#[tokio::test]
 async fn tenant_cannot_change_the_payment_of_a_paid_bill_but_the_admin_can() {
     let app = test_app().await;
     let w = world(&app).await;
@@ -2476,6 +2536,7 @@ async fn a_receipt_attached_during_a_tenant_upload_wins() {
         app.state.db.clone(),
         store.clone(),
         app.state.login_guards.clone(),
+        app.notifier.clone(),
         test_config(),
         None,
     );

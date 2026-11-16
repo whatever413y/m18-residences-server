@@ -14,6 +14,7 @@ use m18_residences_shared_rs::{
     error::ApiError,
     files::{FileStore, sniff},
     log_error, log_ok, log_warn,
+    notify::Notifier,
 };
 use sea_orm::{Set, Statement};
 use serde::{Deserialize, Serialize};
@@ -609,10 +610,12 @@ async fn remove_unattached(files: &dyn FileStore, key: &str, id: i32) {
 /// `tenant-payments/<tenant name>/<unix seconds>-r<reading id>`, replacing
 /// (and then archiving) the previous one. Admins may always do this; the
 /// bill's tenant only while the bill has no receipt (409 after), checked in
-/// the same statement that attaches the file.
+/// the same statement that attaches the file. A tenant's upload is announced
+/// through `notifier`; a failed notice is logged, never returned.
 pub async fn upload_payment(
     db: &Db,
     files: &dyn FileStore,
+    notifier: &dyn Notifier,
     claims: &Claims,
     id: i32,
     payment: PaymentUpload,
@@ -659,7 +662,42 @@ pub async fn upload_payment(
     }
     remove_replaced_payment(db, files, &old, Some(&key)).await;
     log_ok!("Bill id={id} has a new payment image");
-    read_back(db, id).await
+    let updated = read_back(db, id).await?;
+    if tenant_only {
+        let message = payment_notice(&tenant.name, &updated.bill);
+        match notifier.notify(&message).await {
+            Ok(true) => log_ok!("Notified the admin of bill id={id}'s payment"),
+            Ok(false) => {} // Notices are off.
+            Err(err) => log_error!(
+                "Could not notify the admin of bill id={id}'s payment: {}",
+                err.0
+            ),
+        }
+    }
+    Ok(updated)
+}
+
+/// The admin's notice of a tenant's payment upload: who, which bill (the month it was posted), how much.
+fn payment_notice(tenant_name: &str, bill: &bill::Model) -> String {
+    format!(
+        "💸 {tenant_name} uploaded a payment for the {} bill ({}). Check it under Verify in the admin app.",
+        bill.created_at.format("%B %Y"),
+        format_peso(bill.total_amount)
+    )
+}
+
+/// `₱4,250`, `-₱1,000,000`.
+fn format_peso(amount: i32) -> String {
+    let digits = amount.unsigned_abs().to_string();
+    let mut grouped = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    let sign = if amount < 0 { "-" } else { "" };
+    format!("{sign}₱{grouped}")
 }
 
 /// Clears bill `id`'s payment image (the bill back to Unpaid), then removes its file. Only while the
@@ -709,4 +747,18 @@ pub async fn delete_bill_with_charges(
     remove_replaced_receipt(db, files, &old, None).await;
     remove_replaced_payment(db, files, &old, None).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_peso;
+
+    #[test]
+    fn formats_pesos_with_thousands_separators() {
+        assert_eq!(format_peso(0), "₱0");
+        assert_eq!(format_peso(999), "₱999");
+        assert_eq!(format_peso(4250), "₱4,250");
+        assert_eq!(format_peso(1_000_000), "₱1,000,000");
+        assert_eq!(format_peso(-12345), "-₱12,345");
+    }
 }

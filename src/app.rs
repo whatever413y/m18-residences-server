@@ -14,6 +14,7 @@ use m18_residences_shared_rs::{
     config::Config,
     cors::cors_layer,
     files::{FileSigner, FileStore},
+    notify::Notifier,
     rate_limit::RateLimiter,
 };
 use serde_json::{Value, json};
@@ -35,6 +36,8 @@ pub struct AppState {
     pub db: Db,
     pub files: Arc<dyn FileStore>,
     pub login_guards: LoginGuards,
+    /// Where notices for the admin go (a tenant's payment upload).
+    pub notifier: Arc<dyn Notifier>,
     pub config: Arc<Config>,
     pub jwt: JwtKeys,
     pub signer: Arc<FileSigner>,
@@ -47,6 +50,7 @@ impl AppState {
         db: Db,
         files: Arc<dyn FileStore>,
         login_guards: LoginGuards,
+        notifier: Arc<dyn Notifier>,
         config: Config,
         version: Option<String>,
     ) -> Self {
@@ -56,6 +60,7 @@ impl AppState {
             db,
             files,
             login_guards,
+            notifier,
             config: Arc::new(config),
             jwt,
             signer,

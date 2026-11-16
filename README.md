@@ -44,7 +44,8 @@ the origins `.dev.vars` allows.
 
 Configuration: `ALLOWED_ORIGINS` (comma-separated), `JWT_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
 `TURNSTILE_SECRET` (the Turnstile widget's secret; locally Cloudflare's always-pass test secret, see
-`.dev.vars.example`). If any is missing, every request fails with a 500 that names it. In production
+`.dev.vars.example`), `DISCORD_WEBHOOK_URL` (where admin notices go: a Discord channel's webhook URL, a secret, or
+`off` for none, as locally and in e2e). If any is missing, every request fails with a 500 that names it. In production
 `ALLOWED_ORIGINS` is in `wrangler.jsonc`, the others are Worker secrets (`npx wrangler@4.145.0 secret put <NAME>`).
 The binding `LOGIN_RATE_LIMITER` (Workers Rate Limiting, in `wrangler.jsonc`) limits the logins; `wrangler dev`
 simulates it locally.
@@ -155,6 +156,9 @@ statement; a receipt attached meanwhile wins with a 409 and the upload is remove
 (admin) clears it (the bill back to Unpaid), only while the bill has no receipt (409 otherwise, checked in the same statement). The replaced or cleared
 file, and a deleted bill's, is archived the same way (`archive/tenant-payments/...`) after the database write. `paid` still means "has a receipt"; the
 apps show **Unpaid** (neither), **For verification** (payment, no receipt) or **Paid** (receipt).
+A tenant's upload (not the admin's) also posts a notice to the Discord webhook in `DISCORD_WEBHOOK_URL`: the tenant's
+name, the bill's month and total, no links or files; mentions are disabled. It is sent after the database write, and
+a failed notice is logged, never returned (the upload stands).
 
 Payment methods (table `payment_method`, migration 0003; seeded with BPI, GCash and Maya at their old keys
 `payments/<name>.png`): `GET /api/payment-methods` lists them in order as
@@ -175,8 +179,8 @@ file from R2.
 The `development` branch runs as its own Worker, **`development-api`** (https://development-api.m18-residences.workers.dev),
 from `env.development` in `wrangler.jsonc`: its own D1 and R2 (`m18-residences-dev`, synthetic data from
 [`tools/dev-seed`](tools/dev-seed/README.md)), its own secrets (`wrangler secret put <NAME> --env development`: the
-same admin login as production, `ADMIN_USERNAME`/`ADMIN_PASSWORD` in the infra `.env`, and its own random
-`JWT_SECRET`, which lives only in Cloudflare), and CORS for the apps' preview links (`https://*-admin…`, `https://*-my…`,
+same admin login as production, `ADMIN_USERNAME`/`ADMIN_PASSWORD` in the infra `.env`, its own random
+`JWT_SECRET`, which lives only in Cloudflare, and its own `DISCORD_WEBHOOK_URL`: a separate channel's webhook, or `off`), and CORS for the apps' preview links (`https://*-admin…`, `https://*-my…`,
 a `*` standing for one DNS label). The production Worker has `preview_urls: false`: a preview link would use the
 production data.
 

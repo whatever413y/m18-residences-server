@@ -8,3 +8,6 @@ ALLOWED_ORIGINS="http://localhost:50001,http://localhost:50002"
 # Cloudflare Turnstile's always-pass test secret (the apps use the matching test site key 1x00000000000000000000AA).
 # Production and development use the widget's real secret (a Worker secret).
 TURNSTILE_SECRET="1x0000000000000000000000000000000AA"
+# Admin notices (a tenant uploaded a payment): a Discord channel's webhook URL
+# (https://discord.com/api/webhooks/..., a secret), or off to send none (local development, e2e).
+DISCORD_WEBHOOK_URL="off"

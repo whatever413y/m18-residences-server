@@ -296,7 +296,15 @@ pub async fn upload_payment_handler(
     }
     let payment = payment.ok_or_else(|| ApiError::BadRequest("payment_file is required".into()))?;
     Ok(Json(
-        bill_service::upload_payment(&state.db, state.files.as_ref(), &claims, id, payment).await?,
+        bill_service::upload_payment(
+            &state.db,
+            state.files.as_ref(),
+            state.notifier.as_ref(),
+            &claims,
+            id,
+            payment,
+        )
+        .await?,
     ))
 }
 

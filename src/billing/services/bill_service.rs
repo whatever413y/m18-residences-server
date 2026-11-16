@@ -662,17 +662,28 @@ pub async fn upload_payment(
     read_back(db, id).await
 }
 
-/// Clears bill `id`'s payment image, then removes its file.
+/// Clears bill `id`'s payment image (the bill back to Unpaid), then removes its file. Only while the
+/// bill has no receipt (409 otherwise, also when a receipt is attached meanwhile: one conditional
+/// statement).
 pub async fn clear_payment(
     db: &Db,
     files: &dyn FileStore,
     id: i32,
 ) -> Result<BillWithChargesAndReading, ApiError> {
+    let has_receipt = || {
+        ApiError::Conflict("This bill has a receipt: remove the receipt before the payment".into())
+    };
     let Some(old) = bill_repo::get_by_id(db.conn(), id).await? else {
         return Err(not_found(id));
     };
-    if bill_repo::set_payment(db.conn(), id, None, false).await? == 0 {
-        return Err(not_found(id));
+    if old.receipt_url.as_deref().is_some_and(|r| !r.is_empty()) {
+        return Err(has_receipt());
+    }
+    if bill_repo::set_payment(db.conn(), id, None, true).await? == 0 {
+        return Err(match bill_repo::get_by_id(db.conn(), id).await? {
+            None => not_found(id),
+            Some(_) => has_receipt(),
+        });
     }
     remove_replaced_payment(db, files, &old, None).await;
     log_ok!("Cleared the payment image of bill id={id}");

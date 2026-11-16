@@ -152,7 +152,7 @@ Payment images (the tenant's proof of payment, optional): `PUT /api/bills/{id}/p
 `payment_file`, at most 10 MiB, the same types as receipts) stores `tenant-payments/<tenant name>/<unix ts>-r<reading id>`
 and sets only the bill's `payment_url` (for a tenant only while the bill has no receipt, checked in the same
 statement; a receipt attached meanwhile wins with a 409 and the upload is removed); `DELETE /api/bills/{id}/payment`
-(admin) clears it. The replaced or cleared
+(admin) clears it (the bill back to Unpaid), only while the bill has no receipt (409 otherwise, checked in the same statement). The replaced or cleared
 file, and a deleted bill's, is archived the same way (`archive/tenant-payments/...`) after the database write. `paid` still means "has a receipt"; the
 apps show **Unpaid** (neither), **For verification** (payment, no receipt) or **Paid** (receipt).
 

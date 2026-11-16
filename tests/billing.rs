@@ -2175,6 +2175,41 @@ async fn replacing_and_clearing_a_payment_archives_the_old_file() {
 }
 
 #[tokio::test]
+async fn a_payment_can_only_be_removed_while_the_bill_has_no_receipt() {
+    let app = test_app().await;
+    let w = world(&app).await;
+    let created = create_bill(&app, &w).await;
+    let bill_id = created["bill"]["id"].clone();
+    let token = app.admin_token();
+    let (status, uploaded) = upload_payment(&app, &bill_id, Some(&token), samples::PNG).await;
+    assert_eq!(status, StatusCode::OK, "{uploaded}");
+    let key = payment_key(&uploaded);
+    with_stored_receipt(&app, &w, &bill_id).await;
+
+    let (status, body) = app
+        .delete(&format!("/api/bills/{bill_id}/payment"), Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        body,
+        error("This bill has a receipt: remove the receipt before the payment")
+    );
+    let bill = bill_repo::get_by_id(app.db(), bill_id.as_i64().unwrap() as i32)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        bill.payment_key.as_deref(),
+        Some(key.as_str()),
+        "the payment stays"
+    );
+    assert!(
+        app.files.keys().contains(&key),
+        "its file stays, not archived"
+    );
+}
+
+#[tokio::test]
 async fn deleting_a_bill_archives_its_payment_image() {
     let app = test_app().await;
     let w = world(&app).await;
